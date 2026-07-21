@@ -1,4 +1,4 @@
-"""Unit tests for IIS log parser."""
+﻿"""Unit tests for IIS log parser."""
 
 from __future__ import annotations
 
@@ -50,6 +50,10 @@ def test_parse_line_basic() -> None:
     assert row["sc_status"] == 200
     assert row["time_taken"] == 120
     assert "Windows" in (row["cs_user_agent"] or "")
+    # UTC 02:10 → 台北 10:10
+    assert row["datetime_str"] == "2024-01-15 10:10:00"
+    assert row["hour"] == 10
+    assert row["timestamp"] == 1705284600000
 
 
 def test_parse_files_into_db() -> None:

@@ -1,9 +1,12 @@
-"""常數與欄位對應定義（對齊原 HTML 工具）。"""
+﻿"""常數與欄位對應定義（對齊原 HTML 工具）。"""
 
 from __future__ import annotations
 
 PAGE_SIZE_DEFAULT = 500
-BATCH_INSERT_SIZE = 5000
+# 匯入批次：越大則 executemany/commit 次數越少（記憶體略增）
+BATCH_INSERT_SIZE = 50000
+# 匯入期間每隔多少列 commit 一次（WAL 成長與 crash 安全折衷）
+IMPORT_COMMIT_EVERY = 200000
 
 # 顯示名稱 / DB 欄位 / 原始 IIS 欄位名
 # key = UI / config 使用的邏輯欄位名
@@ -123,6 +126,9 @@ DB_COLUMNS = [
     "cs_bytes",
     "cs_host",
 ]
+
+# 插入時不含 id（AUTOINCREMENT）；順序須與 parser 熱路徑 tuple 一致
+INSERT_COLUMNS = [c for c in DB_COLUMNS if c != "id"]
 
 KNOWN_SCANNER_UA_KEYWORDS = [
     "sqlmap",

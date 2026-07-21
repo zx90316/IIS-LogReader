@@ -1,15 +1,113 @@
-"""串流解析 IIS W3C Extended Log，UTC → Asia/Taipei，多檔合併。"""
+﻿"""串流解析 IIS W3C Extended Log，UTC → Asia/Taipei，多檔合併。"""
 
 from __future__ import annotations
 
+import calendar
+import time
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Sequence
 
-from .constants import DEFAULT_PARSED_FIELDS, FIELD_DEFS, IIS_TO_LOGICAL
-from .timezone_util import format_local, get_tz
+from .constants import (
+    DEFAULT_PARSED_FIELDS,
+    IIS_TO_LOGICAL,
+    INSERT_COLUMNS,
+)
+from .timezone_util import fixed_utc_offset_hours, format_local, get_tz
 
 ProgressCallback = Callable[[str, int, int], None]
+
+# INSERT_COLUMNS 索引（熱路徑用常數，避免反覆查表）
+_IDX_SOURCE = 0
+_IDX_TS = 1
+_IDX_DTSTR = 2
+_IDX_HOUR = 3
+_IDX_DATE = 4
+_IDX_TIME = 5
+
+# IIS 欄位 → (INSERT 索引, kind)  kind: 0=str, 1=int, 2=ua(+→空白)
+_KIND_STR, _KIND_INT, _KIND_UA = 0, 1, 2
+_IIS_SLOT: dict[str, tuple[int, int]] = {
+    "date": (_IDX_DATE, _KIND_STR),
+    "time": (_IDX_TIME, _KIND_STR),
+    "s-ip": (6, _KIND_STR),
+    "cs-method": (7, _KIND_STR),
+    "cs-uri-stem": (8, _KIND_STR),
+    "cs-uri-query": (9, _KIND_STR),
+    "s-port": (10, _KIND_STR),
+    "cs-username": (11, _KIND_STR),
+    "c-ip": (12, _KIND_STR),
+    "cs(User-Agent)": (13, _KIND_UA),
+    "cs(Referer)": (14, _KIND_STR),
+    "sc-status": (15, _KIND_INT),
+    "sc-substatus": (16, _KIND_INT),
+    "sc-win32-status": (17, _KIND_INT),
+    "time-taken": (18, _KIND_INT),
+    "sc-bytes": (19, _KIND_INT),
+    "cs-bytes": (20, _KIND_INT),
+    "cs-host": (21, _KIND_STR),
+}
+
+# 預設列模板（source/timestamp/datetime/hour 會被覆寫）
+_ROW_TEMPLATE: tuple[Any, ...] = (
+    "",  # source_file
+    0,  # timestamp
+    "-",  # datetime_str
+    -1,  # hour
+    "-",  # date
+    "-",  # time
+    "-",  # s_ip
+    "-",  # cs_method
+    "-",  # cs_uri_stem
+    "-",  # cs_uri_query
+    "-",  # s_port
+    "-",  # cs_username
+    "-",  # c_ip
+    "-",  # cs_user_agent
+    "-",  # cs_referer
+    0,  # sc_status
+    0,  # sc_substatus
+    0,  # sc_win32_status
+    0,  # time_taken
+    0,  # sc_bytes
+    0,  # cs_bytes
+    "-",  # cs_host
+)
+
+assert len(_ROW_TEMPLATE) == len(INSERT_COLUMNS)
+
+
+class _FieldPlan:
+    __slots__ = ("assigns", "date_part", "time_part", "field_key")
+
+    def __init__(
+        self,
+        assigns: tuple[tuple[int, int, int], ...],
+        date_part: int,
+        time_part: int,
+        field_key: tuple[str, ...],
+    ) -> None:
+        self.assigns = assigns
+        self.date_part = date_part
+        self.time_part = time_part
+        self.field_key = field_key
+
+
+def _compile_field_plan(field_names: Sequence[str]) -> _FieldPlan:
+    assigns: list[tuple[int, int, int]] = []
+    date_part = -1
+    time_part = -1
+    for i, name in enumerate(field_names):
+        slot = _IIS_SLOT.get(name)
+        if slot is None:
+            continue
+        dest, kind = slot
+        assigns.append((i, dest, kind))
+        if dest == _IDX_DATE:
+            date_part = i
+        elif dest == _IDX_TIME:
+            time_part = i
+    return _FieldPlan(tuple(assigns), date_part, time_part, tuple(field_names))
 
 
 def collect_log_files(paths: list[str | Path]) -> list[Path]:
@@ -26,12 +124,13 @@ def collect_log_files(paths: list[str | Path]) -> list[Path]:
                 seen.add(key)
                 found.append(path.resolve())
         elif path.is_dir():
-            for f in sorted(path.rglob("*")):
-                if f.is_file() and f.suffix.lower() == ".log":
-                    key = str(f.resolve()).lower()
-                    if key not in seen:
-                        seen.add(key)
-                        found.append(f.resolve())
+            for f in sorted(path.rglob("*.log")):
+                if not f.is_file():
+                    continue
+                key = str(f.resolve()).lower()
+                if key not in seen:
+                    seen.add(key)
+                    found.append(f.resolve())
     return sorted(found, key=lambda x: str(x).lower())
 
 
@@ -63,110 +162,116 @@ def _to_int(value: str | None, default: int = 0) -> int:
         return default
 
 
+def _fast_utc_ms_and_local(
+    date_s: str, time_s: str, offset_hours: int
+) -> tuple[int, str, int] | None:
+    """手動解析 YYYY-MM-DD HH:MM:SS（UTC）→ epoch ms + 固定偏移本地時間字串。"""
+    if (
+        len(date_s) != 10
+        or date_s[4] != "-"
+        or date_s[7] != "-"
+        or len(time_s) < 8
+        or time_s[2] != ":"
+        or time_s[5] != ":"
+    ):
+        return None
+    try:
+        y = int(date_s[0:4])
+        mo = int(date_s[5:7])
+        d = int(date_s[8:10])
+        h = int(time_s[0:2])
+        mi = int(time_s[3:5])
+        s = int(time_s[6:8])
+        ts = calendar.timegm((y, mo, d, h, mi, s, 0, 0, 0))
+    except (ValueError, OverflowError):
+        return None
+    lt = time.gmtime(ts + offset_hours * 3600)
+    datetime_str = (
+        f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d} "
+        f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
+    )
+    return ts * 1000, datetime_str, lt.tm_hour
+
+
+def parse_line_tuple(
+    parts: list[str],
+    plan: _FieldPlan,
+    source_file: str,
+    *,
+    offset_hours: int | None = 8,
+    tz: tzinfo | None = None,
+) -> tuple[Any, ...] | None:
+    """熱路徑：直接產出對齊 INSERT_COLUMNS 的 tuple。"""
+    if not parts:
+        return None
+
+    row = list(_ROW_TEMPLATE)
+    row[_IDX_SOURCE] = source_file
+    n = len(parts)
+
+    for part_idx, dest, kind in plan.assigns:
+        val = parts[part_idx] if part_idx < n else "-"
+        if kind == _KIND_INT:
+            if val is None or val == "" or val == "-":
+                row[dest] = 0
+            else:
+                try:
+                    row[dest] = int(val)
+                except (ValueError, TypeError):
+                    row[dest] = 0
+        elif kind == _KIND_UA:
+            if val and val != "-":
+                row[dest] = val.replace("+", " ")
+            else:
+                row[dest] = val if val else "-"
+        else:
+            row[dest] = val if val else "-"
+
+    date_s = row[_IDX_DATE]
+    time_s = row[_IDX_TIME]
+    if date_s != "-" and time_s != "-":
+        parsed = None
+        if offset_hours is not None:
+            parsed = _fast_utc_ms_and_local(date_s, time_s, offset_hours)
+        if parsed is not None:
+            row[_IDX_TS], row[_IDX_DTSTR], row[_IDX_HOUR] = parsed
+        else:
+            # 非固定偏移或手動解析失敗：退回 datetime / ZoneInfo
+            try:
+                dt_utc = datetime.strptime(
+                    f"{date_s} {time_s}", "%Y-%m-%d %H:%M:%S"
+                ).replace(tzinfo=timezone.utc)
+                row[_IDX_TS] = int(dt_utc.timestamp() * 1000)
+                if tz is None:
+                    tz = get_tz("Asia/Taipei")
+                row[_IDX_DTSTR], row[_IDX_HOUR] = format_local(dt_utc, tz)
+            except ValueError:
+                row[_IDX_TS] = 0
+                row[_IDX_DTSTR] = "-"
+                row[_IDX_HOUR] = -1
+    else:
+        row[_IDX_TS] = 0
+        row[_IDX_DTSTR] = "-"
+        row[_IDX_HOUR] = -1
+
+    return tuple(row)
+
+
 def parse_line(
     parts: list[str],
     field_names: list[str],
     source_file: str,
     tz: tzinfo,
 ) -> dict[str, Any] | None:
-    """將一行空白分隔的 log 轉成 DB row dict。"""
-    if not parts:
+    """將一行空白分隔的 log 轉成 DB row dict（相容 API）。"""
+    plan = _compile_field_plan(field_names)
+    offset = fixed_utc_offset_hours(tz)
+    tup = parse_line_tuple(
+        parts, plan, source_file, offset_hours=offset, tz=tz
+    )
+    if tup is None:
         return None
-
-    # IIS 欄位名 → 值
-    raw: dict[str, str] = {}
-    for idx, name in enumerate(field_names):
-        raw[name] = parts[idx] if idx < len(parts) else "-"
-
-    row: dict[str, Any] = {col: None for col in (
-        "source_file",
-        "timestamp",
-        "datetime_str",
-        "hour",
-        "date",
-        "time",
-        "s_ip",
-        "cs_method",
-        "cs_uri_stem",
-        "cs_uri_query",
-        "s_port",
-        "cs_username",
-        "c_ip",
-        "cs_user_agent",
-        "cs_referer",
-        "sc_status",
-        "sc_substatus",
-        "sc_win32_status",
-        "time_taken",
-        "sc_bytes",
-        "cs_bytes",
-        "cs_host",
-    )}
-    row["source_file"] = source_file
-
-    # 對應已知欄位
-    for iis_name, value in raw.items():
-        logical = IIS_TO_LOGICAL.get(iis_name)
-        if not logical:
-            # 未在 FIELD_DEFS 的欄位略過（固定 schema）
-            continue
-        db_col = FIELD_DEFS[logical]["db"]
-        row[db_col] = value if value is not None else "-"
-
-    # UA + → 空白
-    ua = row.get("cs_user_agent")
-    if isinstance(ua, str) and ua and ua != "-":
-        row["cs_user_agent"] = ua.replace("+", " ")
-
-    # 數值欄位
-    row["sc_status"] = _to_int(row.get("sc_status"), 0)
-    row["sc_substatus"] = _to_int(row.get("sc_substatus"), 0)
-    row["sc_win32_status"] = _to_int(row.get("sc_win32_status"), 0)
-    row["time_taken"] = _to_int(row.get("time_taken"), 0)
-    row["sc_bytes"] = _to_int(row.get("sc_bytes"), 0)
-    row["cs_bytes"] = _to_int(row.get("cs_bytes"), 0)
-
-    # 字串欄位預設 "-"
-    for key in (
-        "date",
-        "time",
-        "s_ip",
-        "cs_method",
-        "cs_uri_stem",
-        "cs_uri_query",
-        "s_port",
-        "cs_username",
-        "c_ip",
-        "cs_user_agent",
-        "cs_referer",
-        "cs_host",
-    ):
-        if row[key] is None or row[key] == "":
-            row[key] = "-"
-
-    d = row.get("date") or "-"
-    t = row.get("time") or "-"
-    if d != "-" and t != "-":
-        try:
-            # UTC
-            dt_utc = datetime.strptime(f"{d} {t}", "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=timezone.utc
-            )
-            ts_ms = int(dt_utc.timestamp() * 1000)
-            datetime_str, hour = format_local(dt_utc, tz)
-            row["timestamp"] = ts_ms
-            row["datetime_str"] = datetime_str
-            row["hour"] = hour
-        except ValueError:
-            row["timestamp"] = 0
-            row["datetime_str"] = "-"
-            row["hour"] = -1
-    else:
-        row["timestamp"] = 0
-        row["datetime_str"] = "-"
-        row["hour"] = -1
-
-    return row
+    return dict(zip(INSERT_COLUMNS, tup))
 
 
 def iter_parse_file(
@@ -175,25 +280,29 @@ def iter_parse_file(
 ) -> Iterator[dict[str, Any]]:
     """串流解析單一 log 檔，產出 DB row dict。"""
     tz = get_tz(tz_name)
+    offset = fixed_utc_offset_hours(tz)
     detected_fields: list[str] = []
+    plan = _compile_field_plan(DEFAULT_PARSED_FIELDS)
     source_name = path.name
 
     with _open_text(path) as f:
         for line in f:
-            line = line.strip()
+            line = line.rstrip("\r\n")
             if not line:
                 continue
             if line.startswith("#Fields:"):
                 detected_fields = line[8:].strip().split()
+                plan = _compile_field_plan(detected_fields)
                 continue
             if line.startswith("#"):
                 continue
 
-            fields = detected_fields if detected_fields else list(DEFAULT_PARSED_FIELDS)
             parts = line.split(" ")
-            row = parse_line(parts, fields, source_name, tz)
-            if row is not None:
-                yield row
+            tup = parse_line_tuple(
+                parts, plan, source_name, offset_hours=offset, tz=tz
+            )
+            if tup is not None:
+                yield dict(zip(INSERT_COLUMNS, tup))
 
 
 def parse_files_into_db(
@@ -202,6 +311,8 @@ def parse_files_into_db(
     tz_name: str = "Asia/Taipei",
     progress: ProgressCallback | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    *,
+    resolved_files: list[Path] | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """
     解析多個 log 寫入 LogDatabase。
@@ -209,7 +320,9 @@ def parse_files_into_db(
     """
     from .constants import PREFERRED_VISIBLE_FIELDS
 
-    files = collect_log_files(list(file_paths))
+    files = resolved_files if resolved_files is not None else collect_log_files(
+        list(file_paths)
+    )
     if not files:
         raise FileNotFoundError("找不到可載入的 .log 檔案")
 
@@ -217,37 +330,55 @@ def parse_files_into_db(
     source_names: list[str] = []
     total = 0
     n_files = len(files)
+    tz = get_tz(tz_name)
+    offset = fixed_utc_offset_hours(tz)
+    default_plan = _compile_field_plan(DEFAULT_PARSED_FIELDS)
+    cancel_every = 4096
+
+    begin_import = getattr(db, "begin_import", None)
+    if callable(begin_import):
+        begin_import()
+
+    add_row = db.add_row
 
     for fi, path in enumerate(files):
         if should_cancel and should_cancel():
             break
         source_names.append(path.name)
-        file_count = 0
-        detected: list[str] = []
+        plan = default_plan
+        fields_locked = False
+        line_i = 0
 
-        # 先掃 #Fields（與資料同趟讀取）
-        tz = get_tz(tz_name)
         with _open_text(path) as f:
             for line in f:
-                if should_cancel and should_cancel():
+                line_i += 1
+                if should_cancel and line_i % cancel_every == 0 and should_cancel():
                     break
-                line = line.strip()
+                # 去掉換行即可；IIS 資料列幾乎不會有首尾空白需要 strip
+                if line[-1:] == "\n":
+                    line = line[:-1]
+                if line[-1:] == "\r":
+                    line = line[:-1]
                 if not line:
                     continue
-                if line.startswith("#Fields:"):
-                    detected = line[8:].strip().split()
-                    available_iis.update(detected)
+                if line[0] == "#":
+                    if line.startswith("#Fields:"):
+                        detected = line[8:].strip().split()
+                        plan = _compile_field_plan(detected)
+                        available_iis.update(detected)
+                        fields_locked = True
                     continue
-                if line.startswith("#"):
-                    continue
-                fields = detected if detected else list(DEFAULT_PARSED_FIELDS)
-                if not detected:
+
+                if not fields_locked:
                     available_iis.update(DEFAULT_PARSED_FIELDS)
+                    fields_locked = True
+
                 parts = line.split(" ")
-                row = parse_line(parts, fields, path.name, tz)
-                if row is not None:
-                    db.add_row(row)
-                    file_count += 1
+                tup = parse_line_tuple(
+                    parts, plan, path.name, offset_hours=offset, tz=tz
+                )
+                if tup is not None:
+                    add_row(tup)
                     total += 1
                     if progress and total % 20000 == 0:
                         progress(path.name, fi + 1, n_files)

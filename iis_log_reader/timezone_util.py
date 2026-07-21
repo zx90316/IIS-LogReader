@@ -1,4 +1,4 @@
-"""時區工具：Windows 常缺 IANA 資料，優先 zoneinfo/tzdata，失敗則退回固定偏移。"""
+﻿"""時區工具：Windows 常缺 IANA 資料，優先 zoneinfo/tzdata，失敗則退回固定偏移。"""
 
 from __future__ import annotations
 
@@ -22,6 +22,13 @@ def get_tz(tz_name: str = "Asia/Taipei") -> tzinfo:
         "gmt+8": "Asia/Taipei",
     }
     name = aliases.get(name.lower(), name)
+    lower = name.lower()
+
+    # 台灣無夏令時間：固定偏移比 ZoneInfo 快，且語意正確
+    if lower in ("asia/taipei", "taipei", "taiwan"):
+        return _TAIPEI_FIXED
+    if lower in ("utc", "etc/utc"):
+        return timezone.utc
 
     try:
         from zoneinfo import ZoneInfo
@@ -39,13 +46,25 @@ def get_tz(tz_name: str = "Asia/Taipei") -> tzinfo:
     except Exception:
         pass
 
-    if name.lower() in ("asia/taipei", "utc", "etc/utc"):
-        if name.upper() == "UTC" or name.lower() == "etc/utc":
-            return timezone.utc
-        return _TAIPEI_FIXED
-
     # 未知時區：仍以台北固定偏移，避免整個程式崩潰
     return _TAIPEI_FIXED
+
+
+def fixed_utc_offset_hours(tz: tzinfo) -> int | None:
+    """若為固定 UTC 偏移則回傳整數小時，否則 None（需走 ZoneInfo 路徑）。"""
+    if tz is _TAIPEI_FIXED:
+        return 8
+    if tz is timezone.utc:
+        return 0
+    utcoffset = getattr(tz, "utcoffset", None)
+    if callable(utcoffset):
+        try:
+            delta = utcoffset(None)
+            if delta is not None and delta.total_seconds() % 3600 == 0:
+                return int(delta.total_seconds() // 3600)
+        except Exception:
+            return None
+    return None
 
 
 def format_local(dt_utc: datetime, tz: tzinfo) -> tuple[str, int]:

@@ -1,4 +1,4 @@
-"""SQLite 暫存後端：WAL、批次插入、過濾、分頁查詢。"""
+﻿"""SQLite 暫存後端：WAL、批次插入、過濾、分頁查詢。"""
 
 from __future__ import annotations
 
@@ -12,12 +12,11 @@ from .constants import (
     BATCH_INSERT_SIZE,
     DB_COLUMNS,
     FIELD_DEFS,
+    IMPORT_COMMIT_EVERY,
+    INSERT_COLUMNS,
     LOGICAL_TO_DB,
     PAGE_SIZE_DEFAULT,
 )
-
-# 插入時不含 id（AUTOINCREMENT）
-INSERT_COLUMNS = [c for c in DB_COLUMNS if c != "id"]
 
 NUMERIC_DB_COLS = frozenset(
     {
@@ -59,6 +58,12 @@ class LogDatabase:
         self._batch: list[tuple] = []
         self.total_raw = 0
         self.source_files: list[str] = []
+        self._importing = False
+        self._since_commit = 0
+        self._insert_sql = (
+            f"INSERT INTO logs ({','.join(INSERT_COLUMNS)}) "
+            f"VALUES ({','.join('?' for _ in INSERT_COLUMNS)})"
+        )
         if existing:
             cur = self.conn.execute("SELECT COUNT(*) FROM logs")
             self.total_raw = int(cur.fetchone()[0])
@@ -69,7 +74,13 @@ class LogDatabase:
         cur.execute("PRAGMA synchronous=NORMAL")
         cur.execute("PRAGMA temp_store=MEMORY")
         cur.execute("PRAGMA cache_size=-64000")
+        cur.execute("PRAGMA locking_mode=NORMAL")
         self.conn.commit()
+
+    def begin_import(self) -> None:
+        """匯入開始：減少中途 commit 次數。"""
+        self._importing = True
+        self._since_commit = 0
 
     def _create_schema(self) -> None:
         self.conn.execute(
@@ -130,29 +141,42 @@ class LogDatabase:
         self.source_files = []
         self._batch.clear()
 
-    def add_row(self, row: dict[str, Any]) -> None:
-        values = tuple(row.get(col) for col in INSERT_COLUMNS)
+    def add_row(self, row: dict[str, Any] | tuple[Any, ...] | list[Any]) -> None:
+        if isinstance(row, dict):
+            values = tuple(row.get(col) for col in INSERT_COLUMNS)
+        elif isinstance(row, tuple):
+            values = row
+        else:
+            values = tuple(row)
         self._batch.append(values)
         if len(self._batch) >= BATCH_INSERT_SIZE:
             self.flush()
 
-    def add_rows(self, rows: Iterable[dict[str, Any]]) -> None:
+    def add_rows(self, rows: Iterable[dict[str, Any] | tuple[Any, ...] | list[Any]]) -> None:
         for row in rows:
             self.add_row(row)
 
     def flush(self) -> None:
         if not self._batch:
             return
-        placeholders = ",".join("?" for _ in INSERT_COLUMNS)
-        cols = ",".join(INSERT_COLUMNS)
-        sql = f"INSERT INTO logs ({cols}) VALUES ({placeholders})"
-        self.conn.executemany(sql, self._batch)
-        self.conn.commit()
-        self.total_raw += len(self._batch)
+        n = len(self._batch)
+        self.conn.executemany(self._insert_sql, self._batch)
+        self.total_raw += n
         self._batch.clear()
+        if self._importing:
+            self._since_commit += n
+            if self._since_commit >= IMPORT_COMMIT_EVERY:
+                self.conn.commit()
+                self._since_commit = 0
+        else:
+            self.conn.commit()
 
     def finish_import(self, source_files: Sequence[str] | None = None) -> int:
         self.flush()
+        if self._importing:
+            self.conn.commit()
+            self._importing = False
+            self._since_commit = 0
         if source_files is not None:
             self.source_files = list(source_files)
         self.create_indexes()

@@ -1,4 +1,4 @@
-"""背景 QThread workers：載入、查詢、統計。"""
+﻿"""背景 QThread workers：載入、查詢、統計。"""
 
 from __future__ import annotations
 
@@ -88,6 +88,7 @@ class LoadLogsWorker(QThread):
                 tz_name=self.tz_name,
                 progress=on_progress,
                 should_cancel=lambda: self._cancel,
+                resolved_files=files,
             )
             if self._cancel:
                 db.close()
