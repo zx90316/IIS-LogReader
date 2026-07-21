@@ -1,0 +1,21 @@
+[General]
+page_size = 500
+last_dir =
+timezone = Asia/Taipei
+window_geometry =
+
+[VisibleFields]
+fields = datetimeStr,cs-method,cs-uri-stem,cs-uri-query,c-ip,sc-status,time-taken,cs(User-Agent),cs(Referer)
+
+[FilterRules]
+rules_json = [{"id": 1, "name": "AjaxSession.ashx (login check)", "type": "uri_contains", "value": "AjaxSession.ashx", "enabled": true}, {"id": 2, "name": "Scheduled ConvertOutputDoc", "type": "uri_contains", "value": "CommonAjax/ConvertOutputDoc", "enabled": true}, {"id": 3, "name": "Static assets", "type": "uri_extension", "value": ".css,.js,.png,.gif,.jpg,.ico,.woff,.ttf,.svg", "enabled": true}]
+
+[AnomalyThresholds]
+high_freq_std_mult = 2.0
+burst_count = 60
+burst_window_ms = 60000
+slow_ms = 10000
+off_hour_start = 0
+off_hour_end = 7
+error_status_min = 400
+scanner_ua_keywords = sqlmap,nikto,nmap,masscan,zgrab,gobuster,dirbuster,burpsuite,owasp,nuclei,httpx,python-requests,curl,wget,scrapy

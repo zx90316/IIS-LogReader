@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Local config & runtime data (may contain paths / PII from logs)
+app.config
+cache/
+*.db
+*.db-wal
+*.db-shm
+
+# Local log dumps (keep only _smoke_sample/ in repo)
+*.log
+!_smoke_sample/**/*.log
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Export artifacts
+*.pdf
+!docs/**/*.pdf
+
+# Cursor / agent
+.cursor/

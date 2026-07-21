@@ -1,0 +1,9 @@
+﻿#Software: Microsoft Internet Information Services 10.0
+#Version: 1.0
+#Date: 2024-01-15 00:00:00
+#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken
+2024-01-15 02:10:00 192.168.1.1 GET /index.aspx - 80 - 10.0.0.5 Mozilla/5.0+(Windows+NT+10.0) - 200 0 0 120
+2024-01-15 02:10:01 192.168.1.1 GET /style.css - 80 - 10.0.0.5 Mozilla/5.0 - 200 0 0 15
+2024-01-15 02:10:02 192.168.1.1 GET /AjaxSession.ashx - 80 - 10.0.0.6 Mozilla/5.0 - 200 0 0 30
+2024-01-15 02:10:03 192.168.1.1 POST /api/login - 80 - 10.0.0.7 sqlmap/1.5 - 500 0 0 15000
+2024-01-15 03:00:00 192.168.1.1 GET /slow.aspx - 80 - 10.0.0.8 curl/7.0 - 404 0 0 200

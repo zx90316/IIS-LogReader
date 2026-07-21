@@ -1,0 +1,15 @@
+﻿# Normalize text files; keep sample logs / binaries untouched
+* text=auto eol=lf
+
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+*.example text eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
+*.db binary
