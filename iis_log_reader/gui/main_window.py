@@ -1,4 +1,4 @@
-"""主視窗：載入多檔/資料夾、非阻塞查詢、快取管理。"""
+﻿"""主視窗：載入多檔/資料夾、非阻塞查詢、快取管理。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from ..database import LogDatabase
 from .rules_tab import RulesTab
 from .stats_tab import StatsTab
 from .table_tab import TableTab
-from .workers import LoadLogsWorker, StatsWorker
+from .workers import ExportCsvWorker, LoadLogsWorker, StatsWorker
 
 
 class MainWindow(QMainWindow):
@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self._stats_loaded_key: str = ""
         self._worker: LoadLogsWorker | None = None
         self._stats_worker: StatsWorker | None = None
+        self._csv_worker: ExportCsvWorker | None = None
         self._build_ui()
         self._restore_geometry()
 
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
         self.stats_tab.recompute_requested.connect(
             lambda: self.refresh_stats(force=True)
         )
+        self.table_tab.export_csv_requested.connect(self._on_export_csv)
 
     def _restore_geometry(self) -> None:
         geo = self.config.window_geometry
@@ -408,11 +410,86 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "匯出失敗", str(exc))
 
+    def _on_export_csv(self) -> None:
+        if self.db is None:
+            QMessageBox.information(self, "提示", "請先載入 LOG 檔案")
+            return
+        if self._csv_worker and self._csv_worker.isRunning():
+            QMessageBox.information(self, "提示", "正在匯出 CSV，請稍候")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "匯出資料表格 CSV",
+            "iis_log_export.csv",
+            "CSV (*.csv);;All Files (*.*)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+
+        reply = QMessageBox.question(
+            self,
+            "確認匯出",
+            "將依目前「過濾規則 + 欄位篩選 + 時間條件」與可見欄位匯出全部符合的列。\n"
+            "資料量大時可能需數分鐘，是否繼續？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        args = self._query_args()
+        fields = list(self.table_tab.visible_fields)
+        self.progress.show()
+        self.progress.setRange(0, 0)
+        self.status_msg.setText("正在匯出 CSV…")
+        self.table_tab.btn_export_csv.setEnabled(False)
+
+        self._csv_worker = ExportCsvWorker(
+            self.db,
+            path,
+            fields,
+            filter_rules=args["filter_rules"],
+            column_filters=args["column_filters"],
+            time_start_ms=args["time_start_ms"],
+            time_end_ms=args["time_end_ms"],
+            sort_key=self.table_tab.sort_key,
+            sort_dir=self.table_tab.sort_dir,
+            parent=self,
+        )
+        self._csv_worker.progress.connect(self._on_csv_progress)
+        self._csv_worker.finished_ok.connect(self._on_csv_ok)
+        self._csv_worker.failed.connect(self._on_csv_fail)
+        self._csv_worker.start()
+
+    def _on_csv_progress(self, written: int) -> None:
+        self.status_msg.setText(f"正在匯出 CSV… 已寫入 {written:,} 列")
+
+    def _on_csv_ok(self, path: str, count: int) -> None:
+        self.progress.hide()
+        self.table_tab.btn_export_csv.setEnabled(True)
+        self.status_msg.setText(f"CSV 已匯出 {count:,} 列：{path}")
+        QMessageBox.information(
+            self, "匯出完成", f"已寫入 {count:,} 列\n{path}"
+        )
+
+    def _on_csv_fail(self, msg: str) -> None:
+        self.progress.hide()
+        self.table_tab.btn_export_csv.setEnabled(True)
+        self.status_msg.setText(f"CSV 匯出失敗: {msg}")
+        if msg != "已取消匯出":
+            QMessageBox.critical(self, "匯出失敗", msg)
+
     def closeEvent(self, event: QCloseEvent) -> None:
         self._save_geometry()
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(3000)
+        if self._csv_worker and self._csv_worker.isRunning():
+            self._csv_worker.cancel()
+            self._csv_worker.wait(3000)
         if self.db is not None:
             self.db.close()
             self.db = None

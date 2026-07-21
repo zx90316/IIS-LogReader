@@ -1,11 +1,13 @@
-"""資料表格：DB Browser 風格篩選列 + 懶加載（無分頁 / 無前置 COUNT）。"""
+﻿"""資料表格：DB Browser 風格篩選列 + 懶加載（無分頁 / 無前置 COUNT）。"""
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDateTimeEdit,
     QDialog,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTableView,
     QVBoxLayout,
@@ -22,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import FIELD_DEFS, PAGE_SIZE_DEFAULT
 from ..database import LogDatabase
+from .copy_utils import copy_view_selection
 from .log_table_model import LazyLogModel
 
 DEBOUNCE_MS = 300
@@ -111,6 +115,7 @@ class TableTab(QWidget):
     filter_changed = Signal()
     sort_changed = Signal(str, str)
     visible_fields_changed = Signal(list)
+    export_csv_requested = Signal()
 
     def __init__(self, page_size: int = PAGE_SIZE_DEFAULT, parent=None) -> None:
         super().__init__(parent)
@@ -158,11 +163,15 @@ class TableTab(QWidget):
 
         self.btn_clear = QPushButton("清除過濾條件")
         self.btn_cols = QPushButton("欄位設定")
+        self.btn_export_csv = QPushButton("匯出 CSV…")
+        self.btn_export_csv.setToolTip("依目前過濾規則、欄位篩選與時間條件匯出")
         self.btn_clear.clicked.connect(self.clear_filters)
         self.btn_cols.clicked.connect(self._open_col_settings)
+        self.btn_export_csv.clicked.connect(lambda: self.export_csv_requested.emit())
         toolbar.addStretch()
         toolbar.addWidget(self.btn_clear)
         toolbar.addWidget(self.btn_cols)
+        toolbar.addWidget(self.btn_export_csv)
         root.addLayout(toolbar)
 
         self.chk_start.toggled.connect(lambda _: self._schedule_filter())
@@ -178,13 +187,17 @@ class TableTab(QWidget):
         self.table = QTableView()
         self.table.setModel(self._model)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
+        # SelectItems：可點單一欄位複製；Ctrl/Shift 仍可多選區塊
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSortingEnabled(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setWordWrap(False)
         self.table.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
         self.table.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         hh = self.table.horizontalHeader()
         hh.setSectionsClickable(True)
         hh.setStretchLastSection(True)
@@ -193,9 +206,13 @@ class TableTab(QWidget):
         self.table.horizontalScrollBar().valueChanged.connect(
             lambda *_: self._sync_filter_bar()
         )
+        # Ctrl+C：只複製目前選取的儲存格（單格＝該欄位值）
+        self._copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table)
+        self._copy_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._copy_shortcut.activated.connect(self._copy_selection)
         root.addWidget(self.table, stretch=1)
 
-        self.status_label = QLabel("尚未載入資料")
+        self.status_label = QLabel("尚未載入資料（點選儲存格後 Ctrl+C 可複製該欄位）")
         root.addWidget(self.status_label)
 
     def _on_dt_changed(self) -> None:
@@ -312,6 +329,69 @@ class TableTab(QWidget):
             self.visible_fields_changed.emit(ordered)
             self.filter_changed.emit()
             QTimer.singleShot(0, self._sync_filter_bar)
+
+    def _copy_selection(self) -> None:
+        """Ctrl+C：只複製選取的儲存格（單格時即為該欄位值）。"""
+        sm = self.table.selectionModel()
+        if sm is None or not sm.selectedIndexes():
+            return
+        if copy_view_selection(self.table, include_headers=False):
+            n = len(sm.selectedIndexes())
+            if n == 1:
+                self.status_label.setText("已複製 1 個儲存格到剪貼簿")
+            else:
+                self.status_label.setText(f"已複製 {n} 個儲存格到剪貼簿")
+
+    def _copy_full_rows(self, *, include_headers: bool) -> None:
+        """右鍵：依選取儲存格所在列，複製整列（不改動目前選取）。"""
+        from PySide6.QtGui import QGuiApplication
+
+        sm = self.table.selectionModel()
+        model = self.table.model()
+        if sm is None or model is None:
+            return
+        rows = sorted({idx.row() for idx in sm.selectedIndexes()})
+        if not rows:
+            return
+        col_count = model.columnCount()
+        lines: list[str] = []
+        if include_headers:
+            headers = []
+            for c in range(col_count):
+                h = model.headerData(
+                    c, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole
+                )
+                headers.append(
+                    "" if h is None else str(h).replace(" ▲", "").replace(" ▼", "")
+                )
+            lines.append("\t".join(headers))
+        for r in rows:
+            vals = []
+            for c in range(col_count):
+                text = model.data(
+                    model.index(r, c), Qt.ItemDataRole.DisplayRole
+                )
+                vals.append("" if text is None else str(text))
+            lines.append("\t".join(vals))
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self.status_label.setText(f"已複製 {len(rows)} 整列到剪貼簿")
+
+    def _on_table_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        act_copy = QAction("複製選取內容\tCtrl+C", self)
+        act_copy.setShortcut(QKeySequence.StandardKey.Copy)
+        act_copy.triggered.connect(self._copy_selection)
+        act_rows = QAction("複製所在整列（含欄名）", self)
+        act_rows.triggered.connect(lambda: self._copy_full_rows(include_headers=True))
+        act_rows_plain = QAction("複製所在整列（不含欄名）", self)
+        act_rows_plain.triggered.connect(
+            lambda: self._copy_full_rows(include_headers=False)
+        )
+        menu.addAction(act_copy)
+        menu.addSeparator()
+        menu.addAction(act_rows)
+        menu.addAction(act_rows_plain)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     # 相容舊介面（main_window 可能仍呼叫）
     def show_loading(self) -> None:

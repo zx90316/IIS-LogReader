@@ -1,4 +1,4 @@
-"""統計與異常偵測分頁（含閾值設定與匯出）。"""
+﻿"""統計與異常偵測分頁（含閾值設定與匯出）。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
-    QSizePolicy,
     QHeaderView,
     QFormLayout,
     QFrame,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import DEFAULT_THRESHOLDS
+from .copy_utils import enable_table_copy, make_selectable_label
 
 
 class StatsTab(QWidget):
@@ -36,6 +36,7 @@ class StatsTab(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._stats: dict[str, Any] | None = None
+        self._copy_shortcuts: list = []
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -147,6 +148,9 @@ class StatsTab(QWidget):
     def set_thresholds(self, th: dict[str, Any]) -> None:
         self._thresholds = dict(th)
 
+    def _wire_table_copy(self, table: QTableWidget) -> None:
+        self._copy_shortcuts.append(enable_table_copy(table))
+
     def _init_ip(self) -> None:
         layout = QHBoxLayout(self.ip_tab)
         self.ip_table = QTableWidget(0, 2)
@@ -154,9 +158,10 @@ class StatsTab(QWidget):
         self.ip_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.ip_table.horizontalHeader().setStretchLastSection(True)
         self.ip_table.verticalHeader().setVisible(False)
+        self._wire_table_copy(self.ip_table)
         layout.addWidget(self.ip_table, 1)
         right = QVBoxLayout()
-        right.addWidget(QLabel("IP 存取排行"))
+        right.addWidget(QLabel("IP 存取排行（表格可多選 Ctrl+C）"))
         self.ip_bars = QVBoxLayout()
         wrap = QWidget()
         wrap.setLayout(self.ip_bars)
@@ -168,17 +173,21 @@ class StatsTab(QWidget):
 
     def _init_url(self) -> None:
         layout = QVBoxLayout(self.url_tab)
+        hint = QLabel("可多選儲存格後 Ctrl+C 複製")
+        hint.setStyleSheet("color: #64748b;")
+        layout.addWidget(hint)
         self.url_table = QTableWidget(0, 2)
         self.url_table.setHorizontalHeaderLabels(["URI 路徑", "請求數"])
         self.url_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.url_table.horizontalHeader().setStretchLastSection(True)
         self.url_table.verticalHeader().setVisible(False)
+        self._wire_table_copy(self.url_table)
         layout.addWidget(self.url_table)
 
     def _init_time(self) -> None:
         layout = QVBoxLayout(self.time_tab)
         layout.addWidget(QLabel("每小時請求分布（台北時間）"))
-        hint = QLabel("紅色表示離峰時段 (00:00 ~ 07:00)")
+        hint = QLabel("紅色表示離峰時段 (00:00 ~ 07:00)；數字可選取複製")
         hint.setStyleSheet("color: #64748b;")
         layout.addWidget(hint)
         self.hour_bars = QHBoxLayout()
@@ -186,6 +195,9 @@ class StatsTab(QWidget):
         wrap.setLayout(self.hour_bars)
         wrap.setMinimumHeight(280)
         layout.addWidget(wrap)
+        self.hour_summary = make_selectable_label("")
+        self.hour_summary.setStyleSheet("color: #334155; padding: 6px 0;")
+        layout.addWidget(self.hour_summary)
         layout.addStretch()
 
     def _init_status(self) -> None:
@@ -194,9 +206,10 @@ class StatsTab(QWidget):
         self.status_table.setHorizontalHeaderLabels(["HTTP 狀態碼", "次數"])
         self.status_table.horizontalHeader().setStretchLastSection(True)
         self.status_table.verticalHeader().setVisible(False)
+        self._wire_table_copy(self.status_table)
         layout.addWidget(self.status_table, 1)
         right = QVBoxLayout()
-        right.addWidget(QLabel("狀態碼分布比例"))
+        right.addWidget(QLabel("狀態碼分布比例（文字可選取）"))
         self.status_bars = QVBoxLayout()
         wrap = QWidget()
         wrap.setLayout(self.status_bars)
@@ -259,7 +272,7 @@ class StatsTab(QWidget):
         max_c = items[0]["count"] if items else 1
         for row in items:
             line = QHBoxLayout()
-            lab = QLabel(str(row["ip"]))
+            lab = make_selectable_label(str(row["ip"]))
             lab.setFixedWidth(120)
             bar = QProgressBar()
             bar.setRange(0, 100)
@@ -286,6 +299,7 @@ class StatsTab(QWidget):
         self._clear_layout(self.hour_bars)
         max_c = max(hours) if hours else 1
         max_c = max(max_c, 1)
+        summary_parts: list[str] = []
         for h, count in enumerate(hours):
             col = QVBoxLayout()
             bar = QProgressBar()
@@ -305,13 +319,15 @@ class StatsTab(QWidget):
                     "QProgressBar { background: #e2e8f0; border: none; }"
                 )
             bar.setToolTip(f"{h:02d}:00 — {count:,} 筆")
-            lab = QLabel(f"{h:02d}")
+            lab = make_selectable_label(f"{h:02d}")
             lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
             col.addWidget(bar, alignment=Qt.AlignmentFlag.AlignBottom)
             col.addWidget(lab)
             wrap = QWidget()
             wrap.setLayout(col)
             self.hour_bars.addWidget(wrap)
+            summary_parts.append(f"{h:02d}:00={count:,}")
+        self.hour_summary.setText("每小時筆數：" + " ｜ ".join(summary_parts))
 
     def _fill_status(self, stats: dict, total: int) -> None:
         items = stats.get("statusList", [])
@@ -338,9 +354,9 @@ class StatsTab(QWidget):
             pct = row["count"] / total * 100
             line = QVBoxLayout()
             head = QHBoxLayout()
-            head.addWidget(QLabel(f"Status {st}"))
+            head.addWidget(make_selectable_label(f"Status {st}"))
             head.addStretch()
-            head.addWidget(QLabel(f"{pct:.1f}% ({row['count']:,})"))
+            head.addWidget(make_selectable_label(f"{pct:.1f}% ({row['count']:,})"))
             bar = QProgressBar()
             bar.setRange(0, 1000)
             bar.setValue(int(pct * 10))
@@ -372,12 +388,12 @@ class StatsTab(QWidget):
         )
         layout = QVBoxLayout(frame)
         header = QHBoxLayout()
-        lab = QLabel(title)
+        lab = make_selectable_label(title)
         lab.setStyleSheet(f"font-weight: bold; color: {fg}; background: {bg}; padding: 4px;")
         header.addWidget(lab)
         header.addStretch()
         if count > 0:
-            badge = QLabel(f"{count} 筆")
+            badge = make_selectable_label(f"{count} 筆")
             badge.setStyleSheet(
                 f"background: {border}; color: {fg}; padding: 2px 8px; border-radius: 8px;"
             )
@@ -393,25 +409,39 @@ class StatsTab(QWidget):
         # 高頻 IP
         high = a.get("highFreqIPs", [])
         if high:
-            lines = [f"{item['ip']}  請求數: {item['count']} (閾值: {item['threshold']})" for item in high]
-            body = QLabel("\n".join(lines))
-            body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            lines = [
+                f"{item['ip']}  請求數: {item['count']} (閾值: {item['threshold']})"
+                for item in high
+            ]
+            body = make_selectable_label("\n".join(lines), word_wrap=True)
         else:
-            body = QLabel("未偵測到異常高頻 IP")
+            body = make_selectable_label("未偵測到異常高頻 IP")
         self.anomaly_layout.addWidget(
-            self._anomaly_card("高頻存取 IP (超過 mean + k×std)", len(high), body, "warning" if high else "safe")
+            self._anomaly_card(
+                "高頻存取 IP (超過 mean + k×std)",
+                len(high),
+                body,
+                "warning" if high else "safe",
+            )
         )
 
         # 爆量
         bursts = a.get("bursts", [])
         if bursts:
-            lines = [f"{b['ip']}  區間: {b['startStr']} ~ {b['endStr']}  {b['count']}次 / {b['windowSec']}秒" for b in bursts]
-            body = QLabel("\n".join(lines))
-            body.setWordWrap(True)
+            lines = [
+                f"{b['ip']}  區間: {b['startStr']} ~ {b['endStr']}  {b['count']}次 / {b['windowSec']}秒"
+                for b in bursts
+            ]
+            body = make_selectable_label("\n".join(lines), word_wrap=True)
         else:
-            body = QLabel("未偵測到短時間爆量請求")
+            body = make_selectable_label("未偵測到短時間爆量請求")
         self.anomaly_layout.addWidget(
-            self._anomaly_card("爆量請求 (同 IP 短時間高頻)", len(bursts), body, "danger" if bursts else "safe")
+            self._anomaly_card(
+                "爆量請求 (同 IP 短時間高頻)",
+                len(bursts),
+                body,
+                "danger" if bursts else "safe",
+            )
         )
 
         # 可疑 UA（優先使用 SQL 聚合的 count 欄位）
@@ -434,26 +464,40 @@ class StatsTab(QWidget):
             lines = [f"[{cnt}次] {ua}" for ua, cnt in ranked]
             if len(ranked) >= 10:
                 lines.append("僅顯示前 10 種…")
-            body = QLabel("\n".join(lines))
-            body.setWordWrap(True)
+            body = make_selectable_label("\n".join(lines), word_wrap=True)
         else:
-            body = QLabel("未偵測到可疑掃描特徵")
+            body = make_selectable_label("未偵測到可疑掃描特徵")
         self.anomaly_layout.addWidget(
-            self._anomaly_card("可疑 User-Agent (掃描工具特徵)", sus_count, body, "danger" if sus else "safe")
+            self._anomaly_card(
+                "可疑 User-Agent (掃描工具特徵)",
+                sus_count,
+                body,
+                "danger" if sus else "safe",
+            )
         )
 
         # 慢請求
         slow = a.get("slowReqs", [])
         slow_count = a.get("slowReqsCount", len(slow))
         if slow:
-            sorted_slow = sorted(slow, key=lambda x: x.get("time-taken", 0), reverse=True)[:15]
-            lines = [f"{s.get('datetimeStr','')}  {s.get('c-ip','')}  {s.get('cs-uri-stem','')}  {s.get('time-taken')}ms" for s in sorted_slow]
-            body = QLabel("\n".join(lines))
-            body.setWordWrap(True)
+            sorted_slow = sorted(
+                slow, key=lambda x: x.get("time-taken", 0), reverse=True
+            )[:15]
+            lines = [
+                f"{s.get('datetimeStr','')}  {s.get('c-ip','')}  "
+                f"{s.get('cs-uri-stem','')}  {s.get('time-taken')}ms"
+                for s in sorted_slow
+            ]
+            body = make_selectable_label("\n".join(lines), word_wrap=True)
         else:
-            body = QLabel("無超過閾值的慢請求")
+            body = make_selectable_label("無超過閾值的慢請求")
         self.anomaly_layout.addWidget(
-            self._anomaly_card("慢請求 (time-taken > 閾值)", slow_count, body, "warning" if slow else "safe")
+            self._anomaly_card(
+                "慢請求 (time-taken > 閾值)",
+                slow_count,
+                body,
+                "warning" if slow else "safe",
+            )
         )
 
         # 錯誤狀態
@@ -468,10 +512,15 @@ class StatsTab(QWidget):
             lines.append("錯誤來源 IP Top 5:")
             for ip, c in by_ip.most_common(5):
                 lines.append(f"  {ip}: {c} 次")
-            body = QLabel("\n".join(lines))
+            body = make_selectable_label("\n".join(lines), word_wrap=True)
         else:
-            body = QLabel("無 4xx 或 5xx 錯誤記錄")
+            body = make_selectable_label("無 4xx 或 5xx 錯誤記錄")
         self.anomaly_layout.addWidget(
-            self._anomaly_card("錯誤狀態碼 (4xx / 5xx)", err_count, body, "danger" if errs else "safe")
+            self._anomaly_card(
+                "錯誤狀態碼 (4xx / 5xx)",
+                err_count,
+                body,
+                "danger" if errs else "safe",
+            )
         )
         self.anomaly_layout.addStretch()

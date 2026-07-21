@@ -215,3 +215,63 @@ class StatsWorker(QThread):
             self.finished_ok.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class ExportCsvWorker(QThread):
+    """背景依目前表格條件串流匯出 CSV。"""
+
+    progress = Signal(int)  # written rows
+    finished_ok = Signal(str, int)  # path, count
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        db: LogDatabase,
+        path: str | Path,
+        fields: list[str],
+        filter_rules: list[dict[str, Any]],
+        column_filters: dict[str, str],
+        time_start_ms: int | None,
+        time_end_ms: int | None,
+        sort_key: str = "id",
+        sort_dir: str = "asc",
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.db = db
+        self.path = path
+        self.fields = fields
+        self.filter_rules = filter_rules
+        self.column_filters = column_filters
+        self.time_start_ms = time_start_ms
+        self.time_end_ms = time_end_ms
+        self.sort_key = sort_key
+        self.sort_dir = sort_dir
+        self._cancel = False
+
+    def cancel(self) -> None:
+        self._cancel = True
+
+    def run(self) -> None:
+        from ..export_csv import export_filtered_csv
+
+        try:
+            out, count = export_filtered_csv(
+                self.db,
+                self.path,
+                self.fields,
+                filter_rules=self.filter_rules,
+                column_filters=self.column_filters,
+                time_start_ms=self.time_start_ms,
+                time_end_ms=self.time_end_ms,
+                sort_key=self.sort_key,
+                sort_dir=self.sort_dir,
+                progress=lambda n: self.progress.emit(n),
+                should_cancel=lambda: self._cancel,
+            )
+            if self._cancel:
+                self.failed.emit("已取消匯出")
+                return
+            self.finished_ok.emit(str(out), count)
+        except Exception as exc:
+            self.failed.emit(str(exc))

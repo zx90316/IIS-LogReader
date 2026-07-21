@@ -1,4 +1,4 @@
-"""懶加載表格模型：不 COUNT，捲動時再抓下一批（對齊 DB Browser）。"""
+﻿"""懶加載表格模型：不 COUNT，捲動時再抓下一批（對齊 DB Browser）。"""
 
 from __future__ import annotations
 
@@ -97,6 +97,11 @@ class LazyLogModel(QAbstractTableModel):
                     label += " ▲" if self._sort_dir == "asc" else " ▼"
                 return label
         return str(section + 1)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:  # noqa: N802
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):  # noqa: N802
         if not index.isValid():
