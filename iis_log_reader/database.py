@@ -78,9 +78,42 @@ class LogDatabase:
         self.conn.commit()
 
     def begin_import(self) -> None:
-        """匯入開始：減少中途 commit 次數。"""
+        """匯入開始：減少中途 commit 次數、放寬同步以提高吞吐。"""
+        if self.conn.in_transaction:
+            self.conn.commit()
         self._importing = True
         self._since_commit = 0
+        self.conn.execute("PRAGMA synchronous=OFF")
+        self.conn.execute("PRAGMA cache_size=-200000")
+
+    def add_tuples(self, rows: Sequence[tuple[Any, ...]] | list[tuple[Any, ...]]) -> None:
+        """批次追加已對齊 INSERT_COLUMNS 的 tuple（熱路徑）。"""
+        if not rows:
+            return
+        self._batch.extend(rows)
+        if len(self._batch) >= BATCH_INSERT_SIZE:
+            self.flush()
+
+    def absorb_shard(self, shard_path: str | Path) -> int:
+        """合併另一個（無索引）SQLite shard 的 logs 列。"""
+        path = str(shard_path)
+        if self.conn.in_transaction:
+            self.conn.commit()
+        before = self.conn.total_changes
+        self.conn.execute("ATTACH DATABASE ? AS shard", (path,))
+        try:
+            cols = ",".join(INSERT_COLUMNS)
+            self.conn.execute(
+                f"INSERT INTO main.logs ({cols}) SELECT {cols} FROM shard.logs"
+            )
+            self.conn.commit()
+            n = self.conn.total_changes - before
+            self.total_raw += n
+            return n
+        finally:
+            if self.conn.in_transaction:
+                self.conn.commit()
+            self.conn.execute("DETACH DATABASE shard")
 
     def _create_schema(self) -> None:
         self.conn.execute(
@@ -177,10 +210,13 @@ class LogDatabase:
             self.conn.commit()
             self._importing = False
             self._since_commit = 0
+        # 恢復較安全的同步設定
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA cache_size=-64000")
         if source_files is not None:
             self.source_files = list(source_files)
         self.create_indexes()
-        self.conn.execute("ANALYZE")
+        # 略過完整 ANALYZE（大表很慢）；索引已足夠支撐常用查詢
         self.conn.commit()
         cur = self.conn.execute("SELECT COUNT(*) FROM logs")
         self.total_raw = int(cur.fetchone()[0])
