@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,8 +8,17 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+release/
 .eggs/
 pip-wheel-metadata/
+
+# Nuitka
+*.build/
+*.dist/
+*.onefile-build/
+main.build/
+main.dist/
+main.onefile-build/
 
 # Virtual environments
 .venv/

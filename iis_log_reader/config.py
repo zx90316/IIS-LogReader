@@ -1,4 +1,4 @@
-"""以 .config 實體檔案持久化設定。"""
+﻿"""以 .config 實體檔案持久化設定。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,9 @@ class AppConfig:
 
     def __init__(self, path: Path | str | None = None) -> None:
         if path is None:
-            path = Path(__file__).resolve().parent.parent / DEFAULT_CONFIG_NAME
+            from .paths import get_app_dir
+
+            path = get_app_dir() / DEFAULT_CONFIG_NAME
         self.path = Path(path)
         self._parser = configparser.ConfigParser()
         self.page_size = PAGE_SIZE_DEFAULT

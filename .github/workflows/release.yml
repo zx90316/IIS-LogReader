@@ -1,0 +1,80 @@
+﻿name: Release
+
+# 打版 tag（例如 v1.0.0）或手動觸發時，自動打包 standalone 並上傳到 GitHub Releases。
+# 注意：發行檔以 Release Asset 附檔，不會 commit 進 git 倉庫。
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v prefix (e.g. 1.0.1). Leave empty to use tag/sha."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.version }}") {
+            $v = "${{ inputs.version }}".TrimStart("v")
+          } elseif ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $v = (Get-Content pyproject.toml | Select-String '^version\s*=').ToString() -replace '.*"(.*)".*','$1'
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=v$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Release version: $v"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build Nuitka standalone
+        shell: pwsh
+        run: |
+          # CI 環境直接呼叫腳本；略過 pause（build.bat 才有）
+          .\scripts\build_nuitka.ps1 -Mode standalone
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IIS-LogReader-windows-standalone
+          path: |
+            release/IIS-LogReader/**
+            release/IIS-LogReader-*.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: IIS Log Reader ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
+          files: |
+            release/IIS-LogReader-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,4 @@
-"""持久化快取：以檔案指紋判斷是否需重新匯入；統計結果一併實體儲存。"""
+﻿"""持久化快取：以檔案指紋判斷是否需重新匯入；統計結果一併實體儲存。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from typing import Any
 
 
 def _get_cache_dir() -> Path:
-    d = Path(__file__).resolve().parent.parent / "cache"
+    from .paths import get_app_dir
+
+    d = get_app_dir() / "cache"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

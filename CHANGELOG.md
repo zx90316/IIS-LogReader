@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -18,5 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stats result caching keyed by filter rules + thresholds
 - Sample logs under `_smoke_sample/`
 - MIT license and GitHub project scaffolding
+- Nuitka packaging scripts for Windows release (`build.bat`, `scripts/build_nuitka.ps1`)
+- GitHub Actions Release workflow: tag `v*.*.*` → build standalone ZIP → GitHub Release assets
 
 [1.0.0]: https://github.com/zx90316/IIS-LogReader/releases/tag/v1.0.0

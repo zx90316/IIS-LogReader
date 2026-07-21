@@ -1,4 +1,4 @@
-# IIS Log Reader
+﻿# IIS Log Reader
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -107,6 +107,47 @@ pytest -q
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Build Windows release (Nuitka)
+
+### Automatic (GitHub Actions)
+
+Push a version tag to trigger packaging and attach the ZIP to a **GitHub Release** (binaries are **not** committed into git):
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+You can also run the **Release** workflow manually from the Actions tab (`workflow_dispatch`).
+
+### Local build
+
+Requires a C compiler (Visual Studio Build Tools **or** let Nuitka download MinGW64 via `--assume-yes-for-downloads`).
+
+```powershell
+# Install build deps
+pip install -r requirements.txt -r requirements-build.txt
+
+# Recommended for companies / antivirus: standalone folder (DEFAULT)
+.\build.bat
+# or
+.\scripts\build_nuitka.ps1 -Mode standalone
+
+# Optional Authenticode sign (needs Windows SDK + cert)
+.\scripts\build_nuitka.ps1 -Mode standalone -CertThumbprint "<SHA1-thumbprint>"
+
+# One-file exe (convenient, but more AV false positives — not recommended for corp PCs)
+.\scripts\build_nuitka.ps1 -Mode onefile
+```
+
+Artifacts go to `release/` (git-ignored). For standalone, distribute the **entire** `release\IIS-LogReader\` folder or the generated ZIP.
+
+Config and `cache/` are created next to the exe at runtime.
+
+See [SECURITY.md](SECURITY.md) for antivirus / allowlist guidance.
 
 ---
 

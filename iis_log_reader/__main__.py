@@ -1,4 +1,4 @@
-"""Allow `python -m iis_log_reader`."""
+﻿"""Allow `python -m iis_log_reader`."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 def main() -> int:
-    # Ensure project root is importable when run as a module from source tree
     root = Path(__file__).resolve().parent.parent
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -16,12 +15,13 @@ def main() -> int:
 
     from iis_log_reader.config import AppConfig
     from iis_log_reader.gui.main_window import MainWindow
+    from iis_log_reader.paths import get_app_dir
 
     app = QApplication(sys.argv)
     app.setApplicationName("IIS Log 分析工具")
     app.setOrganizationName("IIS-LogReader")
 
-    config = AppConfig(root / "app.config")
+    config = AppConfig(get_app_dir() / "app.config")
     win = MainWindow(config)
     win.show()
     return app.exec()
