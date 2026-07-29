@@ -1,4 +1,4 @@
-﻿"""統計與異常偵測分頁（含閾值設定與匯出）。"""
+"""統計與異常偵測分頁（含閾值設定與匯出）。"""
 
 from __future__ import annotations
 
@@ -107,6 +107,8 @@ class StatsTab(QWidget):
             "off_hour_start": "離峰起始 (時)",
             "off_hour_end": "離峰結束 (時)",
             "error_status_min": "錯誤狀態碼下限",
+            "page_scrape_count": "同頁面抓取次數門檻",
+            "page_scrape_min_span_min": "同頁面抓取最小持續 (分)",
             "scanner_ua_keywords": "可疑 UA 關鍵字 (逗號分隔)",
         }
         current = dict(DEFAULT_THRESHOLDS)
@@ -441,6 +443,37 @@ class StatsTab(QWidget):
                 len(bursts),
                 body,
                 "danger" if bursts else "safe",
+            )
+        )
+
+        # 同頁面大量抓取
+        scrapes = a.get("pageScrapes", [])
+        scrape_count = a.get("pageScrapesCount", len(scrapes))
+        if scrapes:
+            lines = []
+            for s in scrapes[:15]:
+                q_desc = ""
+                if s.get("queries"):
+                    q_desc = "  參數: " + ", ".join(
+                        f"{q['query']}({q['count']})" for q in s["queries"]
+                    )
+                    if s.get("queryCount", 0) > len(s["queries"]):
+                        q_desc += f" …共{s['queryCount']}種"
+                lines.append(
+                    f"{s['ip']}  {s['url']}  {s['count']:,}次  "
+                    f"{s['startStr']} ~ {s['endStr']}{q_desc}"
+                )
+            if scrape_count > 15:
+                lines.append(f"僅顯示前 15 組，共 {scrape_count} 組…")
+            body = make_selectable_label("\n".join(lines), word_wrap=True)
+        else:
+            body = make_selectable_label("未偵測到同 IP 持續大量抓取同頁面")
+        self.anomaly_layout.addWidget(
+            self._anomaly_card(
+                "同頁面大量抓取 (同 IP 持續請求同頁面)",
+                scrape_count,
+                body,
+                "danger" if scrapes else "safe",
             )
         )
 

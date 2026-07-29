@@ -1,4 +1,4 @@
-"""統計與異常偵測：過濾結果物化一次，其餘走 SQL 聚合（避免重複全表掃描）。"""
+﻿"""統計與異常偵測：過濾結果物化一次，其餘走 SQL 聚合（避免重複全表掃描）。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from .timezone_util import get_tz
 
 DETAIL_LIMIT = 50
 BURST_CANDIDATE_LIMIT = 30
+PAGE_SCRAPE_LIMIT = 50
+PAGE_SCRAPE_TOP_QUERIES = 3
 SRC = "_stats_src"
 IP_COUNTS = "_ip_counts"
 
@@ -26,6 +28,7 @@ def compute_stats(
     tz_name: str = "Asia/Taipei",
     thresholds: dict[str, Any] | None = None,
     progress: Any | None = None,
+    scrape_limit: int | None = None,
 ) -> dict[str, Any] | None:
     """對目前篩選條件計算完整統計與異常。無資料時回傳 None。"""
     th = thresholds or {}
@@ -36,6 +39,8 @@ def compute_stats(
     off_start = int(th.get("off_hour_start", 0))
     off_end = int(th.get("off_hour_end", 7))
     err_min = int(th.get("error_status_min", 400))
+    page_scrape_count = int(th.get("page_scrape_count", 100))
+    page_scrape_min_span_min = int(th.get("page_scrape_min_span_min", 0))
     scanner_kw_raw = th.get("scanner_ua_keywords", "")
     if scanner_kw_raw and isinstance(scanner_kw_raw, str):
         keywords = [k.strip().lower() for k in scanner_kw_raw.split(",") if k.strip()]
@@ -114,6 +119,9 @@ def compute_stats(
             err_min,
             burst_count,
             burst_window_ms,
+            page_scrape_count,
+            page_scrape_min_span_min,
+            scrape_limit,
             status_list,
         )
         anomalies["highFreqIPs"] = high_freq
@@ -136,7 +144,7 @@ def _materialize(conn, where: str, params: list) -> None:
     conn.execute(
         f"""
         CREATE TEMP TABLE {SRC} AS
-        SELECT timestamp, datetime_str, hour, c_ip, cs_uri_stem,
+        SELECT timestamp, datetime_str, hour, c_ip, cs_uri_stem, cs_uri_query,
                cs_user_agent, sc_status, time_taken
         FROM logs {where}
         """,
@@ -145,6 +153,10 @@ def _materialize(conn, where: str, params: list) -> None:
     # 爆量查詢需要 (c_ip, timestamp) 才能邊掃邊提早結束
     conn.execute(
         f"CREATE INDEX IF NOT EXISTS idx_{SRC}_ip_ts ON {SRC}(c_ip, timestamp)"
+    )
+    # 同頁面抓取偵測的 query 明細查詢需要 (c_ip, cs_uri_stem)
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{SRC}_ip_stem ON {SRC}(c_ip, cs_uri_stem)"
     )
 
 
@@ -191,6 +203,9 @@ def _anomalies_from_src(
     err_min: int,
     burst_count: int,
     burst_window_ms: int,
+    page_scrape_count: int,
+    page_scrape_min_span_min: int,
+    scrape_limit: int | None,
     status_list: list[dict[str, Any]],
 ) -> dict[str, Any]:
     tz = get_tz(tz_name)
@@ -261,6 +276,9 @@ def _anomalies_from_src(
     bursts = _detect_bursts_early_exit(
         conn, tz, burst_count, burst_window_ms
     )
+    scrape_count, page_scrapes = _detect_page_scraping(
+        conn, tz, page_scrape_count, page_scrape_min_span_min * 60000, scrape_limit
+    )
 
     return {
         "highFreqIPs": [],
@@ -273,6 +291,8 @@ def _anomalies_from_src(
         "susUA": sus_ua,
         "susUACount": sus_count,
         "bursts": bursts,
+        "pageScrapes": page_scrapes,
+        "pageScrapesCount": scrape_count,
     }
 
 
@@ -363,8 +383,80 @@ def _detect_bursts_early_exit(
     return bursts
 
 
+def _detect_page_scraping(
+    conn,
+    tz: tzinfo,
+    min_count: int,
+    min_span_ms: int,
+    limit: int | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
+    """偵測同一 IP 對同一頁面持續大量請求（爬蟲/攻擊特徵）。
+
+    條件：同 (c_ip, cs_uri_stem) 請求數 >= min_count，
+    且（min_span_ms > 0 時）首末請求跨度 >= min_span_ms。
+    每組附帶出現次數最高的 query string 參數。
+    limit 預設 PAGE_SCRAPE_LIMIT；傳 -1 表示不限（CLI 完整匯出用）。
+    """
+    having = "COUNT(*) >= ?"
+    params: list[Any] = [min_count]
+    if min_span_ms > 0:
+        having += " AND (MAX(timestamp) - MIN(timestamp)) >= ?"
+        params.append(min_span_ms)
+    base = (
+        f"FROM {SRC} "
+        f"WHERE c_ip IS NOT NULL AND c_ip != '-' "
+        f"AND cs_uri_stem IS NOT NULL AND cs_uri_stem != '-' "
+        f"GROUP BY c_ip, cs_uri_stem HAVING {having}"
+    )
+    total = int(
+        conn.execute(f"SELECT COUNT(*) FROM (SELECT 1 {base})", params).fetchone()[0]
+    )
+    effective_limit = PAGE_SCRAPE_LIMIT if limit is None else limit
+    rows = conn.execute(
+        f"SELECT c_ip AS ip, cs_uri_stem AS url, COUNT(*) AS cnt, "
+        f"MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts "
+        f"{base} ORDER BY cnt DESC LIMIT {effective_limit}",
+        params,
+    ).fetchall()
+    if not rows:
+        return total, []
+
+    q_sql = f"""
+        SELECT cs_uri_query AS q, COUNT(*) AS cnt FROM {SRC}
+        WHERE c_ip = ? AND cs_uri_stem = ?
+          AND cs_uri_query IS NOT NULL AND cs_uri_query != '-' AND cs_uri_query != ''
+        GROUP BY cs_uri_query ORDER BY cnt DESC
+    """
+    results: list[dict[str, Any]] = []
+    for r in rows:
+        q_rows = conn.execute(q_sql, (r["ip"], r["url"])).fetchall()
+        queries = [
+            {"query": qr["q"], "count": int(qr["cnt"])}
+            for qr in q_rows[:PAGE_SCRAPE_TOP_QUERIES]
+        ]
+        results.append(
+            {
+                "ip": r["ip"],
+                "url": r["url"],
+                "count": int(r["cnt"]),
+                "startStr": _fmt_dt(int(r["first_ts"] or 0), tz),
+                "endStr": _fmt_dt(int(r["last_ts"] or 0), tz),
+                "queries": queries,
+                "queryCount": len(q_rows),
+            }
+        )
+    return total, results
+
+
 def _fmt_time(ts_ms: int, tz: tzinfo) -> str:
     if not ts_ms:
         return "-"
     dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone(tz)
     return dt.strftime("%H:%M:%S")
+
+
+def _fmt_dt(ts_ms: int, tz: tzinfo) -> str:
+    if not ts_ms:
+        return "-"
+    dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone(tz)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")

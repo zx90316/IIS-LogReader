@@ -18,4 +18,6 @@ slow_ms = 10000
 off_hour_start = 0
 off_hour_end = 7
 error_status_min = 400
+page_scrape_count = 100
+page_scrape_min_span_min = 0
 scanner_ua_keywords = sqlmap,nikto,nmap,masscan,zgrab,gobuster,dirbuster,burpsuite,owasp,nuclei,httpx,python-requests,curl,wget,scrapy

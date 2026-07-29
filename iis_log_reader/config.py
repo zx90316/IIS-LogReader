@@ -1,4 +1,4 @@
-﻿"""以 .config 實體檔案持久化設定。"""
+"""以 .config 實體檔案持久化設定。"""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "off_hour_start": 0,
     "off_hour_end": 7,
     "error_status_min": 400,
+    "page_scrape_count": 100,
+    "page_scrape_min_span_min": 0,
     "scanner_ua_keywords": ",".join(KNOWN_SCANNER_UA_KEYWORDS),
 }
 

@@ -56,7 +56,7 @@ Write-Host "==> 安裝 / 更新建置依賴..." -ForegroundColor Cyan
 
 $OutDir = Join-Path $Root "release"
 $ProductName = "IIS-LogReader"
-$Version = "1.1.0"
+$Version = "1.2.0"
 $Manifest = Join-Path $Root "packaging\app.manifest"
 
 if (Test-Path $OutDir) {
@@ -75,7 +75,7 @@ $NuitkaArgs = @(
     "-m", "nuitka",
     "--standalone",
     "--enable-plugin=pyside6",
-    "--windows-console-mode=disable",
+    "--windows-console-mode=attach",
     "--assume-yes-for-downloads",
     "--follow-imports",
     "--include-package=iis_log_reader",
