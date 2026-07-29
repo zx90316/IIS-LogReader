@@ -157,3 +157,141 @@ def clear_cache_for(fingerprint: str) -> None:
                 p.unlink()
         except OSError:
             pass
+
+
+# ------------------------------------------------------------------
+# 自動淘汰（LRU）
+# ------------------------------------------------------------------
+
+_ENTRY_SUFFIXES = (".db", ".db-wal", ".db-shm", ".meta.json", ".stats.json")
+
+
+def _entry_fingerprint(name: str) -> str | None:
+    for suffix in _ENTRY_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return None
+
+
+def list_cache_entries(cache_dir: Path | None = None) -> list[dict[str, Any]]:
+    """掃描 cache 目錄並依指紋歸組。
+
+    回傳 [{"fingerprint", "files", "total_bytes", "latest_mtime", "has_db"}]，
+    依 latest_mtime 新→舊排序。無 .db 的組視為孤兒（import 中斷殘留）。
+    """
+    d = cache_dir or _get_cache_dir()
+    groups: dict[str, dict[str, Any]] = {}
+    if not d.exists():
+        return []
+    for f in d.iterdir():
+        if not f.is_file():
+            continue
+        fp = _entry_fingerprint(f.name)
+        if fp is None:
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        g = groups.setdefault(
+            fp,
+            {
+                "fingerprint": fp,
+                "files": [],
+                "total_bytes": 0,
+                "latest_mtime": 0.0,
+                "has_db": False,
+            },
+        )
+        g["files"].append(f)
+        g["total_bytes"] += st.st_size
+        g["latest_mtime"] = max(g["latest_mtime"], st.st_mtime)
+        if f.name == f"{fp}.db":
+            g["has_db"] = True
+    entries = sorted(groups.values(), key=lambda g: -g["latest_mtime"])
+    return entries
+
+
+def prune_cache(
+    max_entries: int = 3,
+    max_total_bytes: int = 4096 * 1024 * 1024,
+    max_age_days: int = 30,
+    protect: str | None = None,
+    cache_dir: Path | None = None,
+    now: float | None = None,
+) -> dict[str, int]:
+    """依 LRU 淘汰快取：孤兒 → 超齡 → 超出保留組數 → 總量超標。
+
+    protect 指紋（目前使用中）永遠保留；檔案鎖定時跳過該組。
+    回傳 {"removed_entries", "removed_files", "freed_bytes"}。
+    """
+    import time
+
+    d = cache_dir or _get_cache_dir()
+    now = time.time() if now is None else now
+    result = {"removed_entries": 0, "removed_files": 0, "freed_bytes": 0}
+
+    def _remove_entry(g: dict[str, Any]) -> None:
+        freed = 0
+        removed = 0
+        for f in g["files"]:
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                freed += size
+                removed += 1
+            except OSError:
+                pass
+        if removed == len(g["files"]):
+            result["removed_entries"] += 1
+        result["removed_files"] += removed
+        result["freed_bytes"] += freed
+        g["_removed"] = removed > 0
+
+    entries = list_cache_entries(d)
+
+    # 1. 孤兒組（無 .db，import 中斷殘留）
+    for g in entries:
+        if not g["has_db"] and g["fingerprint"] != protect:
+            _remove_entry(g)
+    entries = [g for g in entries if g["has_db"] and not g.get("_removed")]
+
+    # 2. 超齡
+    if max_age_days > 0:
+        cutoff = now - max_age_days * 86400
+        for g in entries:
+            if g["latest_mtime"] < cutoff and g["fingerprint"] != protect:
+                _remove_entry(g)
+        entries = [g for g in entries if not g.get("_removed")]
+
+    # 3. 保留最新 N 組
+    if max_entries >= 0:
+        kept = 0
+        for g in entries:
+            if g["fingerprint"] == protect:
+                kept += 1
+                continue
+            if kept < max_entries:
+                kept += 1
+            else:
+                _remove_entry(g)
+        entries = [g for g in entries if not g.get("_removed")]
+
+    # 4. 總量超標：從最舊繼續刪（protect 保留）
+    if max_total_bytes > 0:
+        total = sum(g["total_bytes"] for g in entries)
+        for g in reversed(entries):  # 舊→新
+            if total <= max_total_bytes:
+                break
+            if g["fingerprint"] == protect:
+                continue
+            total -= g["total_bytes"]
+            _remove_entry(g)
+
+    return result
+
+
+def cache_dir_size(cache_dir: Path | None = None) -> tuple[int, int]:
+    """回傳 (總位元組, 組數)，供 UI 顯示用量。"""
+    entries = list_cache_entries(cache_dir)
+    return sum(g["total_bytes"] for g in entries), len(entries)

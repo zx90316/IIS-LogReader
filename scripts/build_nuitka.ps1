@@ -56,7 +56,7 @@ Write-Host "==> 安裝 / 更新建置依賴..." -ForegroundColor Cyan
 
 $OutDir = Join-Path $Root "release"
 $ProductName = "IIS-LogReader"
-$Version = "1.2.1"
+$Version = "1.3.0"
 $Manifest = Join-Path $Root "packaging\app.manifest"
 
 if (Test-Path $OutDir) {

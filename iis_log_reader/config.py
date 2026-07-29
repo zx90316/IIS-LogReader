@@ -16,6 +16,12 @@ from .constants import (
 
 DEFAULT_CONFIG_NAME = "app.config"
 
+DEFAULT_CACHE_LIMITS: dict[str, int] = {
+    "max_entries": 3,
+    "max_total_mb": 4096,
+    "max_age_days": 30,
+}
+
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "high_freq_std_mult": 2.0,
     "burst_count": 60,
@@ -49,6 +55,9 @@ class AppConfig:
         ]
         self.window_geometry = ""
         self.thresholds: dict[str, Any] = dict(DEFAULT_THRESHOLDS)
+        self.cache_max_entries = DEFAULT_CACHE_LIMITS["max_entries"]
+        self.cache_max_total_mb = DEFAULT_CACHE_LIMITS["max_total_mb"]
+        self.cache_max_age_days = DEFAULT_CACHE_LIMITS["max_age_days"]
         self.load()
 
     def load(self) -> None:
@@ -98,6 +107,18 @@ class AppConfig:
                 else:
                     self.thresholds[key] = raw
 
+        # 快取淘汰上限
+        c = self._section("Cache")
+        self.cache_max_entries = c.getint(
+            "max_entries", DEFAULT_CACHE_LIMITS["max_entries"]
+        )
+        self.cache_max_total_mb = c.getint(
+            "max_total_mb", DEFAULT_CACHE_LIMITS["max_total_mb"]
+        )
+        self.cache_max_age_days = c.getint(
+            "max_age_days", DEFAULT_CACHE_LIMITS["max_age_days"]
+        )
+
     def save(self) -> None:
         if not self._parser.has_section("General"):
             self._parser.add_section("General")
@@ -107,6 +128,8 @@ class AppConfig:
             self._parser.add_section("FilterRules")
         if not self._parser.has_section("AnomalyThresholds"):
             self._parser.add_section("AnomalyThresholds")
+        if not self._parser.has_section("Cache"):
+            self._parser.add_section("Cache")
 
         self._parser["General"]["page_size"] = str(self.page_size)
         self._parser["General"]["last_dir"] = self.last_dir
@@ -120,6 +143,10 @@ class AppConfig:
 
         for key, val in self.thresholds.items():
             self._parser["AnomalyThresholds"][key] = str(val)
+
+        self._parser["Cache"]["max_entries"] = str(self.cache_max_entries)
+        self._parser["Cache"]["max_total_mb"] = str(self.cache_max_total_mb)
+        self._parser["Cache"]["max_age_days"] = str(self.cache_max_age_days)
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("w", encoding="utf-8") as f:

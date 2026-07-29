@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -22,9 +22,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..cache_store import (
+    cache_dir_size,
     clear_all_cache,
     compute_stats_key,
     load_stats_cache,
+    prune_cache,
     save_stats_cache,
 )
 from ..config import AppConfig
@@ -49,6 +51,8 @@ class MainWindow(QMainWindow):
         self._csv_worker: ExportCsvWorker | None = None
         self._build_ui()
         self._restore_geometry()
+        # 啟動後背景執行快取淘汰，避免拖慢開窗
+        QTimer.singleShot(2000, self._prune_cache_startup)
 
     def _build_ui(self) -> None:
         self.setWindowTitle("IIS Log 分析工具")
@@ -155,8 +159,38 @@ class MainWindow(QMainWindow):
     def _clear_cache_reload(self) -> None:
         clear_all_cache()
         self.status_msg.setText("已清除快取")
+        self._update_cache_tooltip()
         if self._last_paths:
             self._start_load(self._last_paths, force_reload=True)
+
+    def _prune_cache_startup(self) -> None:
+        freed = self._run_prune(protect=None)
+        if freed["removed_entries"] > 0:
+            gb = freed["freed_bytes"] / (1024 ** 3)
+            self.status_msg.setText(
+                f"已自動清理 {freed['removed_entries']} 組過期快取"
+                f"（釋出 {gb:.1f} GB）"
+            )
+
+    def _run_prune(self, protect: str | None) -> dict[str, int]:
+        result = prune_cache(
+            max_entries=self.config.cache_max_entries,
+            max_total_bytes=self.config.cache_max_total_mb * 1024 * 1024,
+            max_age_days=self.config.cache_max_age_days,
+            protect=protect,
+        )
+        self._update_cache_tooltip()
+        return result
+
+    def _update_cache_tooltip(self) -> None:
+        total_bytes, count = cache_dir_size()
+        gb = total_bytes / (1024 ** 3)
+        self.btn_clear_cache.setToolTip(
+            f"快取用量：{count} 組，{gb:.1f} GB"
+            f"（自動保留最新 {self.config.cache_max_entries} 組"
+            f" / 上限 {self.config.cache_max_total_mb} MB"
+            f" / {self.config.cache_max_age_days} 天）"
+        )
 
     _last_paths: list[str] = []
 
@@ -232,6 +266,8 @@ class MainWindow(QMainWindow):
         # 統計僅依過濾規則；若已有實體快取則載入，否則等使用者開啟統計分頁再算
         if self.tabs.currentWidget() is self.stats_tab:
             self.refresh_stats(force=False)
+        # 新快取寫入後再淘汰一次（保留目前使用中的指紋）
+        self._run_prune(protect=self._cache_fingerprint or None)
 
     def _on_load_fail(self, msg: str) -> None:
         self.progress.hide()

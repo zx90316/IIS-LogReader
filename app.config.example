@@ -21,3 +21,8 @@ error_status_min = 400
 page_scrape_count = 100
 page_scrape_min_span_min = 0
 scanner_ua_keywords = sqlmap,nikto,nmap,masscan,zgrab,gobuster,dirbuster,burpsuite,owasp,nuclei,httpx,python-requests,curl,wget,scrapy
+
+[Cache]
+max_entries = 3
+max_total_mb = 4096
+max_age_days = 30

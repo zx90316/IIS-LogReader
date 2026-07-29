@@ -118,3 +118,34 @@ def test_run_cli_no_logs(tmp_path: Path) -> None:
     empty.mkdir()
     code = run_cli(str(empty), tmp_path / "out", "html", config=_make_config(tmp_path))
     assert code == EXIT_NO_DATA
+
+
+def test_run_cli_respects_filter_rules(tmp_path: Path) -> None:
+    """過濾規則排除攻擊頁面後，黑名單不得再有該 IP。"""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    _make_log(log_dir)
+    out_dir = tmp_path / "out"
+
+    cfg = _make_config(tmp_path)
+    cfg.filter_rules = [
+        {
+            "id": 1,
+            "name": "排除 products",
+            "type": "uri_contains",
+            "value": "/products/detail",
+            "enabled": True,
+        }
+    ]
+    code = run_cli(str(log_dir), out_dir, "html", config=cfg)
+
+    assert code == EXIT_OK
+    ips = (out_dir / "黑名單IP.txt").read_text(encoding="utf-8").split()
+    assert ips == []
+    text = (out_dir / "建議黑名單.txt").read_text(encoding="utf-8")
+    assert ATTACK_IP not in text
+    assert "未偵測到可疑 IP" in text
+    # 120 筆攻擊流量被過濾，報告只剩 10 筆正常流量
+    html = (out_dir / "分析報告.html").read_text(encoding="utf-8")
+    assert ATTACK_IP not in html
+    assert "1 條規則" in html
