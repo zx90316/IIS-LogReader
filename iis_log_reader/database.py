@@ -1,4 +1,4 @@
-﻿"""SQLite 暫存後端：WAL、批次插入、過濾、分頁查詢。"""
+"""SQLite 暫存後端：WAL、批次插入、過濾、分頁查詢。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-﻿"""串流解析 IIS W3C Extended Log，UTC → Asia/Taipei，多檔合併。"""
+"""串流解析 IIS W3C Extended Log，UTC → Asia/Taipei，多檔合併。"""
 
 from __future__ import annotations
 

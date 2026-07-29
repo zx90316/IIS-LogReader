@@ -1,4 +1,4 @@
-﻿"""依「同頁面大量抓取」偵測結果產生建議黑名單與完整清單匯出。"""
+"""依「同頁面大量抓取」偵測結果產生建議黑名單與完整清單匯出。"""
 
 from __future__ import annotations
 
@@ -36,12 +36,21 @@ def format_reason(entry: dict[str, Any], threshold: int) -> str:
     """單一目標頁面的完整理由文字。"""
     url = entry.get("url", "-")
     count = int(entry.get("count", 0))
-    start = entry.get("startStr", "-")
-    end = entry.get("endStr", "-")
-    reason = (
-        f"對 {url} 請求 {count:,} 次（門檻 {threshold:,}），"
-        f"時間 {start} ~ {end}"
-    )
+    day = str(entry.get("day") or "")
+    start = str(entry.get("startStr", "-"))
+    end = str(entry.get("endStr", "-"))
+    if day:
+        start_t = start[11:] if len(start) > 11 else start
+        end_t = end[11:] if len(end) > 11 else end
+        reason = (
+            f"於 {day} 對 {url} 請求 {count:,} 次（每日門檻 {threshold:,}），"
+            f"時間 {start_t} ~ {end_t}"
+        )
+    else:
+        reason = (
+            f"對 {url} 請求 {count:,} 次（門檻 {threshold:,}），"
+            f"時間 {start} ~ {end}"
+        )
     query_count = int(entry.get("queryCount", 0) or 0)
     queries = entry.get("queries") or []
     if query_count > 0:
@@ -94,7 +103,7 @@ def export_page_scrapes_csv(
     with out_path.open("w", encoding="utf-8-sig", newline="") as fp:
         writer = csv.writer(fp)
         writer.writerow(
-            ["IP", "目標頁面", "次數", "開始時間", "結束時間", "參數種數", "其餘瀏覽參數"]
+            ["IP", "目標頁面", "日期", "次數", "開始時間", "結束時間", "參數種數", "其餘瀏覽參數"]
         )
         for s in scrapes:
             queries = s.get("queries") or []
@@ -106,6 +115,7 @@ def export_page_scrapes_csv(
                 [
                     s.get("ip", ""),
                     s.get("url", ""),
+                    s.get("day", ""),
                     int(s.get("count", 0)),
                     s.get("startStr", ""),
                     s.get("endStr", ""),

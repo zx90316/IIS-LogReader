@@ -1,4 +1,4 @@
-﻿"""統計與異常偵測：過濾結果物化一次，其餘走 SQL 聚合（避免重複全表掃描）。"""
+"""統計與異常偵測：過濾結果物化一次，其餘走 SQL 聚合（避免重複全表掃描）。"""
 
 from __future__ import annotations
 
@@ -390,13 +390,15 @@ def _detect_page_scraping(
     min_span_ms: int,
     limit: int | None = None,
 ) -> tuple[int, list[dict[str, Any]]]:
-    """偵測同一 IP 對同一頁面持續大量請求（爬蟲/攻擊特徵）。
+    """偵測同一 IP 每日對同一頁面持續大量請求（爬蟲/攻擊特徵）。
 
-    條件：同 (c_ip, cs_uri_stem) 請求數 >= min_count，
-    且（min_span_ms > 0 時）首末請求跨度 >= min_span_ms。
-    每組附帶出現次數最高的 query string 參數。
+    以本地日期（datetime_str 前 10 碼）切分：同 (c_ip, cs_uri_stem, 日期)
+    請求數 >= min_count 才算異常，避免跨日累計誤判正常重度使用者。
+    且（min_span_ms > 0 時）當日首末請求跨度 >= min_span_ms。
+    每組附帶當日出現次數最高的 query string 參數。
     limit 預設 PAGE_SCRAPE_LIMIT；傳 -1 表示不限（CLI 完整匯出用）。
     """
+    day_expr = "SUBSTR(datetime_str, 1, 10)"
     having = "COUNT(*) >= ?"
     params: list[Any] = [min_count]
     if min_span_ms > 0:
@@ -406,14 +408,16 @@ def _detect_page_scraping(
         f"FROM {SRC} "
         f"WHERE c_ip IS NOT NULL AND c_ip != '-' "
         f"AND cs_uri_stem IS NOT NULL AND cs_uri_stem != '-' "
-        f"GROUP BY c_ip, cs_uri_stem HAVING {having}"
+        f"AND LENGTH(IFNULL(datetime_str, '')) >= 10 "
+        f"GROUP BY c_ip, cs_uri_stem, {day_expr} HAVING {having}"
     )
     total = int(
         conn.execute(f"SELECT COUNT(*) FROM (SELECT 1 {base})", params).fetchone()[0]
     )
     effective_limit = PAGE_SCRAPE_LIMIT if limit is None else limit
     rows = conn.execute(
-        f"SELECT c_ip AS ip, cs_uri_stem AS url, COUNT(*) AS cnt, "
+        f"SELECT c_ip AS ip, cs_uri_stem AS url, {day_expr} AS day, "
+        f"COUNT(*) AS cnt, "
         f"MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts "
         f"{base} ORDER BY cnt DESC LIMIT {effective_limit}",
         params,
@@ -423,13 +427,13 @@ def _detect_page_scraping(
 
     q_sql = f"""
         SELECT cs_uri_query AS q, COUNT(*) AS cnt FROM {SRC}
-        WHERE c_ip = ? AND cs_uri_stem = ?
+        WHERE c_ip = ? AND cs_uri_stem = ? AND {day_expr} = ?
           AND cs_uri_query IS NOT NULL AND cs_uri_query != '-' AND cs_uri_query != ''
         GROUP BY cs_uri_query ORDER BY cnt DESC
     """
     results: list[dict[str, Any]] = []
     for r in rows:
-        q_rows = conn.execute(q_sql, (r["ip"], r["url"])).fetchall()
+        q_rows = conn.execute(q_sql, (r["ip"], r["url"], r["day"])).fetchall()
         queries = [
             {"query": qr["q"], "count": int(qr["cnt"])}
             for qr in q_rows[:PAGE_SCRAPE_TOP_QUERIES]
@@ -438,6 +442,7 @@ def _detect_page_scraping(
             {
                 "ip": r["ip"],
                 "url": r["url"],
+                "day": r["day"],
                 "count": int(r["cnt"]),
                 "startStr": _fmt_dt(int(r["first_ts"] or 0), tz),
                 "endStr": _fmt_dt(int(r["last_ts"] or 0), tz),

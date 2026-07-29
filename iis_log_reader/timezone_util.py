@@ -1,4 +1,4 @@
-﻿"""時區工具：Windows 常缺 IANA 資料，優先 zoneinfo/tzdata，失敗則退回固定偏移。"""
+"""時區工具：Windows 常缺 IANA 資料，優先 zoneinfo/tzdata，失敗則退回固定偏移。"""
 
 from __future__ import annotations
 

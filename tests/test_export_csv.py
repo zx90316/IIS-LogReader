@@ -1,4 +1,4 @@
-﻿"""CSV 匯出測試。"""
+"""CSV 匯出測試。"""
 
 from __future__ import annotations
 

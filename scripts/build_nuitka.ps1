@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   使用 Nuitka 打包 Windows 發行版（預設採企業防毒友善的 standalone）。
@@ -56,7 +56,7 @@ Write-Host "==> 安裝 / 更新建置依賴..." -ForegroundColor Cyan
 
 $OutDir = Join-Path $Root "release"
 $ProductName = "IIS-LogReader"
-$Version = "1.2.0"
+$Version = "1.2.1"
 $Manifest = Join-Path $Root "packaging\app.manifest"
 
 if (Test-Path $OutDir) {

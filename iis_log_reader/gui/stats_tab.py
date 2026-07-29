@@ -107,7 +107,7 @@ class StatsTab(QWidget):
             "off_hour_start": "離峰起始 (時)",
             "off_hour_end": "離峰結束 (時)",
             "error_status_min": "錯誤狀態碼下限",
-            "page_scrape_count": "同頁面抓取次數門檻",
+            "page_scrape_count": "同頁面抓取次數門檻 (每日)",
             "page_scrape_min_span_min": "同頁面抓取最小持續 (分)",
             "scanner_ua_keywords": "可疑 UA 關鍵字 (逗號分隔)",
         }
@@ -459,18 +459,22 @@ class StatsTab(QWidget):
                     )
                     if s.get("queryCount", 0) > len(s["queries"]):
                         q_desc += f" …共{s['queryCount']}種"
+                day = s.get("day") or ""
+                start_t = str(s["startStr"])[11:] if day else s["startStr"]
+                end_t = str(s["endStr"])[11:] if day else s["endStr"]
+                day_part = f"{day}  " if day else ""
                 lines.append(
-                    f"{s['ip']}  {s['url']}  {s['count']:,}次  "
-                    f"{s['startStr']} ~ {s['endStr']}{q_desc}"
+                    f"{s['ip']}  {day_part}{s['url']}  {s['count']:,}次  "
+                    f"{start_t} ~ {end_t}{q_desc}"
                 )
             if scrape_count > 15:
                 lines.append(f"僅顯示前 15 組，共 {scrape_count} 組…")
             body = make_selectable_label("\n".join(lines), word_wrap=True)
         else:
-            body = make_selectable_label("未偵測到同 IP 持續大量抓取同頁面")
+            body = make_selectable_label("未偵測到同 IP 每日大量抓取同頁面")
         self.anomaly_layout.addWidget(
             self._anomaly_card(
-                "同頁面大量抓取 (同 IP 持續請求同頁面)",
+                "同頁面大量抓取 (同 IP 每日對同頁面達門檻)",
                 scrape_count,
                 body,
                 "danger" if scrapes else "safe",

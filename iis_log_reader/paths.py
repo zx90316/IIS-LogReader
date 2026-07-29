@@ -1,4 +1,4 @@
-﻿"""應用程式根目錄解析（開發模式 vs Nuitka / 凍結 exe）。"""
+"""應用程式根目錄解析（開發模式 vs Nuitka / 凍結 exe）。"""
 
 from __future__ import annotations
 

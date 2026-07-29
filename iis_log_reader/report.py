@@ -58,7 +58,7 @@ def build_markdown_report(
             "off_hour_start": "離峰起始 (時)",
             "off_hour_end": "離峰結束 (時)",
             "error_status_min": "錯誤狀態碼下限",
-            "page_scrape_count": "同頁面抓取次數門檻",
+            "page_scrape_count": "同頁面抓取次數門檻 (每日)",
             "page_scrape_min_span_min": "同頁面抓取最小持續 (分)",
         }
         for k, label in labels.items():
@@ -147,13 +147,13 @@ def build_markdown_report(
     scrapes = anomalies.get("pageScrapes", [])
     scrape_count = anomalies.get("pageScrapesCount", len(scrapes))
     psc = thresholds.get("page_scrape_count", 100) if thresholds else 100
-    lines.append(f"### 同頁面大量抓取（同 IP 對同頁面 ≥ {psc} 次）")
+    lines.append(f"### 同頁面大量抓取（同 IP 每日對同頁面 ≥ {psc} 次）")
     lines.append("")
     if scrapes:
-        lines.append(f"共偵測到 {scrape_count} 組 IP＋頁面組合。前 15 組：")
+        lines.append(f"共偵測到 {scrape_count} 組 IP＋頁面＋日期組合。前 15 組：")
         lines.append("")
-        lines.append("| IP | 目標頁面 | 次數 | 開始時間 | 結束時間 | 其餘瀏覽參數 |")
-        lines.append("|-----|----------|------|----------|----------|--------------|")
+        lines.append("| IP | 目標頁面 | 日期 | 次數 | 開始 | 結束 | 其餘瀏覽參數 |")
+        lines.append("|-----|----------|------|------|------|------|--------------|")
         for s in scrapes[:15]:
             if s.get("queries"):
                 q_desc = ", ".join(
@@ -165,12 +165,15 @@ def build_markdown_report(
                 q_desc = "-"
             url_cell = str(s["url"])[:60].replace("|", "\\|")
             q_cell = q_desc[:80].replace("|", "\\|")
+            day = str(s.get("day") or "-")
+            start_t = str(s["startStr"])[11:] if day != "-" else s["startStr"]
+            end_t = str(s["endStr"])[11:] if day != "-" else s["endStr"]
             lines.append(
-                f"| {s['ip']} | {url_cell} | {s['count']:,} | "
-                f"{s['startStr']} | {s['endStr']} | {q_cell} |"
+                f"| {s['ip']} | {url_cell} | {day} | {s['count']:,} | "
+                f"{start_t} | {end_t} | {q_cell} |"
             )
     else:
-        lines.append("未偵測到同 IP 持續大量抓取同頁面。")
+        lines.append("未偵測到同 IP 每日大量抓取同頁面。")
     lines.append("")
 
     sus = anomalies.get("susUA", [])
@@ -378,7 +381,7 @@ def build_html_report(
             ("off_hour_start", "離峰起始 (時)"),
             ("off_hour_end", "離峰結束 (時)"),
             ("error_status_min", "錯誤狀態碼下限"),
-            ("page_scrape_count", "同頁面抓取次數門檻"),
+            ("page_scrape_count", "同頁面抓取次數門檻 (每日)"),
             ("page_scrape_min_span_min", "同頁面抓取最小持續 (分)"),
         ]
         for key, label in labels:
@@ -505,15 +508,15 @@ def build_html_report(
     scrape_cls = "section page-break" if len(scrapes) > 8 else "section"
     parts.append(f'<div class="{scrape_cls}">')
     parts.append(
-        f"<h3>同頁面大量抓取（同 IP 對同頁面 ≥ {int(psc)} 次）</h3>"
+        f"<h3>同頁面大量抓取（同 IP 每日對同頁面 ≥ {int(psc)} 次）</h3>"
     )
     if scrapes:
         parts.append(
-            f"<p>共偵測到 <strong>{scrape_count}</strong> 組 IP＋頁面組合。前 15 組：</p>"
+            f"<p>共偵測到 <strong>{scrape_count}</strong> 組 IP＋頁面＋日期組合。前 15 組：</p>"
         )
         parts.append(
-            "<table><thead><tr><th>IP</th><th>目標頁面</th>"
-            "<th class='num'>次數</th><th>開始時間</th><th>結束時間</th>"
+            "<table><thead><tr><th>IP</th><th>目標頁面</th><th>日期</th>"
+            "<th class='num'>次數</th><th>開始</th><th>結束</th>"
             "<th>其餘瀏覽參數</th></tr></thead><tbody>"
         )
         for s in scrapes[:15]:
@@ -525,17 +528,21 @@ def build_html_report(
                     q_desc += f" 等 {s['queryCount']} 種"
             else:
                 q_desc = "-"
+            day = str(s.get("day") or "-")
+            start_t = str(s.get("startStr", ""))[11:] if day != "-" else s.get("startStr", "-")
+            end_t = str(s.get("endStr", ""))[11:] if day != "-" else s.get("endStr", "-")
             parts.append(
                 f"<tr><td>{_esc(s.get('ip'))}</td>"
                 f"<td>{_esc(str(s.get('url', ''))[:70])}</td>"
+                f"<td>{_esc(day)}</td>"
                 f"<td class='num'>{int(s.get('count', 0)):,}</td>"
-                f"<td>{_esc(s.get('startStr'))}</td>"
-                f"<td>{_esc(s.get('endStr'))}</td>"
+                f"<td>{_esc(start_t)}</td>"
+                f"<td>{_esc(end_t)}</td>"
                 f"<td>{_esc(q_desc[:100])}</td></tr>"
             )
         parts.append("</tbody></table>")
     else:
-        parts.append('<p class="muted">未偵測到同 IP 持續大量抓取同頁面。</p>')
+        parts.append('<p class="muted">未偵測到同 IP 每日大量抓取同頁面。</p>')
     parts.append("</div>")
 
     # 可疑 UA

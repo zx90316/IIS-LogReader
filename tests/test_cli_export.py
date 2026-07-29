@@ -1,4 +1,4 @@
-﻿"""CLI 匯出端到端測試：假 W3C log → run_cli → 報告/完整清單/黑名單。"""
+"""CLI 匯出端到端測試：假 W3C log → run_cli → 報告/完整清單/黑名單。"""
 
 from __future__ import annotations
 
@@ -65,22 +65,23 @@ def test_run_cli_exports_all_files(tmp_path: Path) -> None:
     assert ips == [ATTACK_IP]
     assert NORMAL_IP not in ips
 
-    # 建議黑名單：含 IP 與完整理由
+    # 建議黑名單：含 IP 與完整理由（每日門檻語意）
     text = suggest.read_text(encoding="utf-8")
     assert ATTACK_IP in text
-    assert "/products/detail" in text
+    assert "於 2026-07-28 對 /products/detail" in text
     assert "120" in text
-    assert "門檻 100" in text
+    assert "每日門檻 100" in text
     assert "5 種參數" in text
 
     # 完整清單 CSV：header + 1 組資料
     with scrape_csv.open(encoding="utf-8-sig", newline="") as fp:
         rows = list(csv.reader(fp))
-    assert rows[0] == ["IP", "目標頁面", "次數", "開始時間", "結束時間", "參數種數", "其餘瀏覽參數"]
+    assert rows[0] == ["IP", "目標頁面", "日期", "次數", "開始時間", "結束時間", "參數種數", "其餘瀏覽參數"]
     assert len(rows) == 2
     assert rows[1][0] == ATTACK_IP
     assert rows[1][1] == "/products/detail"
-    assert rows[1][2] == "120"
+    assert rows[1][2] == "2026-07-28"
+    assert rows[1][3] == "120"
 
     # 報告含同頁面大量抓取區塊
     html = report.read_text(encoding="utf-8")

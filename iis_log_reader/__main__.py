@@ -1,4 +1,4 @@
-﻿"""Allow `python -m iis_log_reader`."""
+"""Allow `python -m iis_log_reader`."""
 
 from __future__ import annotations
 

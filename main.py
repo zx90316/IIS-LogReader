@@ -1,4 +1,4 @@
-﻿"""IIS Log 分析工具 — 進入點（GUI / CLI 雙模式）。"""
+"""IIS Log 分析工具 — 進入點（GUI / CLI 雙模式）。"""
 
 from __future__ import annotations
 

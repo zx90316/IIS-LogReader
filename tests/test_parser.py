@@ -1,4 +1,4 @@
-﻿"""Unit tests for IIS log parser."""
+"""Unit tests for IIS log parser."""
 
 from __future__ import annotations
 

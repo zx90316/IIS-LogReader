@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 # 打版 tag（例如 v1.0.0）或手動觸發時，自動打包 standalone 並上傳到 GitHub Releases。
 # 注意：發行檔以 Release Asset 附檔，不會 commit 進 git 倉庫。

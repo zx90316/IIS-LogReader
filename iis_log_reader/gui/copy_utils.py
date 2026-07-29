@@ -1,4 +1,4 @@
-﻿"""表格／文字選取複製共用工具。"""
+"""表格／文字選取複製共用工具。"""
 
 from __future__ import annotations
 

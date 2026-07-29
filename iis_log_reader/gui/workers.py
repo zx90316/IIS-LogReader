@@ -1,4 +1,4 @@
-﻿"""背景 QThread workers：載入、查詢、統計。"""
+"""背景 QThread workers：載入、查詢、統計。"""
 
 from __future__ import annotations
 

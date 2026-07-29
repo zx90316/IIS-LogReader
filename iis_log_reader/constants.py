@@ -1,4 +1,4 @@
-﻿"""常數與欄位對應定義（對齊原 HTML 工具）。"""
+"""常數與欄位對應定義（對齊原 HTML 工具）。"""
 
 from __future__ import annotations
 

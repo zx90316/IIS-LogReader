@@ -1,4 +1,4 @@
-﻿"""依目前查詢條件串流匯出 CSV（UTF-8 BOM，方便 Excel）。"""
+"""依目前查詢條件串流匯出 CSV（UTF-8 BOM，方便 Excel）。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-﻿"""懶加載表格模型：不 COUNT，捲動時再抓下一批（對齊 DB Browser）。"""
+"""懶加載表格模型：不 COUNT，捲動時再抓下一批（對齊 DB Browser）。"""
 
 from __future__ import annotations
 

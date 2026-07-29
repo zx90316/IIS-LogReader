@@ -1,4 +1,4 @@
-﻿"""資料表格：DB Browser 風格篩選列 + 懶加載（無分頁 / 無前置 COUNT）。"""
+"""資料表格：DB Browser 風格篩選列 + 懶加載（無分頁 / 無前置 COUNT）。"""
 
 from __future__ import annotations
 

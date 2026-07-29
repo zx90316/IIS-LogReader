@@ -1,4 +1,4 @@
-﻿# Normalize text files; keep sample logs / binaries untouched
+# Normalize text files; keep sample logs / binaries untouched
 * text=auto eol=lf
 
 *.py text eol=lf
